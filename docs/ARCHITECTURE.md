@@ -2,13 +2,18 @@
 
 ```
 Browser (React)  --REST/SSE-->  FastAPI (localhost:8765)  --Messages API-->  Claude
-                                  |-- SQLite: projects, catalog (FTS5), jobs, api_calls, retrievals
+                                  |-- SQLite: users, sessions, projects, subcontractors, submittals,
+                                  |           library files, catalog (FTS5), jobs, api_calls, retrievals
                                   |-- data/: library PDFs, uploads, jobs/<id>/{work,outputs,events.jsonl}
 ```
 
 | Spec section | Code |
 | --- | --- |
-| 5 GUI: drop zones, scope selector, instructions, naming preview, progress, results | `frontend/src/pages/NewReview.tsx`, `components/ScopeSelector.tsx`, `pages/RunView.tsx`, `pages/Library.tsx` |
+| 5 GUI: project home, submittal register, new review, library, progress, results | `frontend/src/App.tsx`, `pages/ProjectPages.tsx`, `pages/NewReview.tsx`, `components/ScopeSelector.tsx`, `pages/RunView.tsx`, `pages/Library.tsx` |
+| Accounts: login, sessions, per-user encrypted API key, project ownership | `backend/asm/auth.py`, `api/app.py` (`require_login` middleware), `frontend/src/pages/Login.tsx` |
+| Submittal register + subcontractors (status follows the latest run) | `backend/asm/db.py`, `pipeline.py` |
+| Auto-fill review details from the submittal (rules, then Haiku if a key is set) | `backend/asm/autofill.py` |
+| Cover page templates (field mapping, `{Token}` fill, no model) | `backend/asm/pdf/cover_template.py`, `components/CoverMapper.tsx` |
 | 6 Library ingest (section/part/article split, sheets, amendments, Haiku summaries) | `backend/asm/library/ingest.py` |
 | 6 Catalog index (Tier 0), scope tree, heuristic scope | `backend/asm/library/catalog.py` |
 | 6 Retrieval tools + scope enforcement (flexible/strict, page budget, logging) | `backend/asm/library/tools.py` |
@@ -25,7 +30,7 @@ Browser (React)  --REST/SSE-->  FastAPI (localhost:8765)  --Messages API-->  Cla
 | 16 Evaluation | `eval/run_eval.py` |
 
 ## Run flow (`pipeline.py`)
-1. **Prepare** - merge zone 1 files in order, OCR if scanned, lock scope (designated section always in).
+1. **Prepare** - merge the submittal files in order, OCR if scanned, lock scope (designated section always in).
 2. **Intake** (Haiku) - page map, products, models, selected options.
 3. **Planner** (Sonnet) - reads designated section + amendments via tools; atomic requirements with citations;
    package rules from Division 01 and examples.
@@ -50,3 +55,14 @@ re-runs and packaging are shared; `single_verdicts` sends any unverified or low-
   Haiku cost is negligible). Batches can be added in `library/ingest.py::_ai_summaries`.
 - Submittals are sent inline (base64 PDF, cached) instead of via the Files API; larger packages switch to
   page text + an on-demand page viewer tool.
+
+## Accounts and library (v0.4)
+- Local accounts only (scrypt hashes, 14-day httponly session cookie). Every `/api` route except auth and
+  health requires a session; project-scoped routes check `owner_id`. The first account claims ownerless
+  projects from earlier versions. LLM calls use the project owner's key (`auth.api_key_for_project`), falling
+  back to the global `.env` key.
+- Library uploads are stored with a type chosen up front (`status=uploaded`) and only split/catalogued when
+  the user presses Process (`/library/process`); bulk type/division/delete via `/library/bulk`.
+- Quality templates, Division 01 and cover templates are library files (`kind` example/div01/cover) picked per
+  review through `params.library_refs`. A cover template is inserted as page 1 and filled by
+  `cover_template.fill`; the generated cover follows only if requested.

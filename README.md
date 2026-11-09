@@ -1,6 +1,6 @@
 # Ajax Submittal Manager
 
-AI-assisted first-pass submittal review for Ajax Building Company. Drop a Product Data or Shop Drawing
+First-pass submittal review for Ajax Building Company. Drop a Product Data or Shop Drawing
 package, point it at the project's specs and drawings, and get back:
 
 1. **An A/E-ready PDF** - named per Division 01, cover/transmittal, TOC, deviation summary, bookmarks, and
@@ -13,9 +13,6 @@ Two independent Claude agents cross-examine every requirement - a **Compliance A
 and a **Non-Compliance Examiner** hunting deviations - and an **Adjudicator** settles disagreements or sends
 them to a human. A project **catalog** keeps every run to just the spec sections, articles and sheets it needs.
 
-> ASM prepares, flags and explains. It never approves, signs, or submits anything. A qualified person
-> verifies every output before it goes to the A/E or into Procore.
-
 ---
 
 ## Quick start (Windows - no install)
@@ -24,8 +21,9 @@ them to a human. A project **catalog** keeps every run to just the spec sections
    [Releases](https://github.com/AjaxAgents/AjaxSubmittalManager/releases/latest) page and put it in any folder.
 2. Double-click it. A small control window opens and the app opens in your browser. Keep the control window
    open while you work; **Quit** stops the app.
-3. Settings opens automatically the first time: paste your **Anthropic API key** (from
-   <https://console.anthropic.com>) and save.
+3. Create your account (the first account becomes the admin and takes over any projects from earlier
+   versions). Settings then opens: paste your **Anthropic API key** (from <https://console.anthropic.com>)
+   and save. Each account keeps its own key (encrypted with Windows DPAPI), projects, submittals and theme.
 
 Where things live:
 - Finished PDFs/TXTs: an **`Outputs`** folder next to the exe (changeable in `config/settings.yaml` > `output.folder`).
@@ -48,20 +46,32 @@ publishes it to Releases).
 
 ## Using it
 
-1. **Create a project** - name, number, A/E, contractor (these fill every cover sheet).
-2. **Zone 2 - Project information**: drop the project manual, drawing set, addenda/ASIs/RFIs once. ASM splits
-   specs by section > part > article, drawings by sheet, tags amendments to what they change, and builds the
-   catalog (see *Project library*).
-3. **New review**: enter the spec section and submittal number; drop the submittal (zone 1), example
-   submittals (zone 3) and optional Division 01 procedures (zone 4).
-4. **Reference scope**: ASM pre-selects the sections, articles, sheets and amendments it expects to need.
-   Add/remove items, trim pages, and choose *Flexible* (agents may pull up to 20 extra pages, each logged) or
-   *Strict* (anything else becomes a Human Review item). The scope is remembered per spec section.
-5. **Reviewer instructions** (e.g. "hardware sets 3-5 only", "substitution approved per RFI 112") go to every
-   agent. Check the **file name preview**.
-6. **Run**. Watch each stage, retrievals and live cost. When done, page through the marked-up PDF, filter the
-   requirements matrix, read the Human Review list and TXT, and download both files.
-7. **Re-run** with notes ("N-02 accepted per RFI 112") to redo only adjudication and assembly - fast and cheap.
+Each project has a **Home** page (counts, recent submittals), a **Submittals** register (grouped and
+searchable by division, with status, subcontractor and revision), **New Submittal Review**, and a
+**Project Library**.
+
+1. **Create a project** - name, number, A/E, contractor, owner, address (these fill every cover page).
+2. **Project Library** (load once per project):
+   - *Project information* - upload the project manual, drawings, addenda/ASIs/RFIs. Pick the type
+     (Spec / Drawings / Amendment / Document, or Auto) and division **before** uploading; files are stored
+     but not processed until you press **Process**. Select rows to bulk-change type or division, re-process,
+     or delete. Processing splits specs by section > part > article and drawings by sheet, tags amendments,
+     and builds the catalog.
+   - *Quality templates* (example submittals), *Division 01* procedures, and *Cover page* templates. Mark the
+     ones to use by default. For a cover template, **Map fields** links each form field or text box to
+     submittal data; you can also type `{ProjectName}`, `{SubmittalNo}`, `{SpecSection}`, `{Subcontractor}`
+     etc. anywhere on the template. Covers are filled by fixed rules, not by the model.
+   - *Divisions & subcontractors* - preload the divisions in play and who holds each scope.
+3. **New Submittal Review**: drop the submittal PDF, then **Auto-fill details** to read the spec section,
+   type, subcontractor and title from its first pages. The subcontractor, spec section, submittal number and
+   revision autocomplete from the project. Under *Reference materials*, the project-information scope is
+   pre-selected (add anything else the review needs, e.g. the concrete spec and a footing detail for a fence
+   submittal); quality template, Division 01 and cover page default from the library.
+4. Choose **Cross-examined** (two reviewers + adjudicator) or **Single pass**, and **Run review**. Watch each
+   stage and live cost; then page through the marked-up PDF, the requirements matrix and the TXT notes.
+5. **Re-run** with notes ("N-02 accepted per RFI 112") to redo only adjudication and assembly.
+
+Settings has light/dark mode, your API key, password, and review defaults.
 
 Outputs are copied to `Outputs\<project>\` next to the exe (each run's full audit trail stays in the data folder).
 
@@ -117,5 +127,5 @@ Ajax/STO legal before distributing ASM or hosting it for outside users (or buy a
 ## Data handling
 
 Runs locally and binds to localhost. Project documents leave the machine only as the slices sent to the
-Claude API. Confirm you are permitted to send project documents to a third-party AI service under the
+Claude API. Confirm you are permitted to send project documents to a third-party service under the
 owner/contract confidentiality terms. `data/` is git-ignored; keep confidential eval cases out of git.

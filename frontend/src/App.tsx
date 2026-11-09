@@ -1,172 +1,192 @@
-import React, { useCallback, useEffect, useState } from "react";
-import { api, Health, Job, LibraryFile, Project, Settings, TreeNode } from "./api";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { api, Job, LibraryFile, Project, Settings, Sub, TreeNode, User } from "./api";
 import { ProjectModal, SettingsModal } from "./components/Modals";
-import { Badge, Button, Icon, ToastProvider, useToast } from "./components/ui";
-import { History, Library } from "./pages/Library";
-import { NewReview } from "./pages/NewReview";
+import { Icon, ToastProvider, useToast } from "./components/ui";
+import { LibTab, Library } from "./pages/Library";
+import { Login, Logo } from "./pages/Login";
+import { NewReview, Prefill } from "./pages/NewReview";
+import { ProjectHome, ProjectsPage, SubmittalsPage } from "./pages/ProjectPages";
 import { RunView } from "./pages/RunView";
 
-type View = "new" | "library" | "history" | "run";
-const store = {
-  get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } },
-  set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } },
-};
+type View = "home" | "submittals" | "new" | "library" | "run";
+interface Route { pid: string | null; view: View; arg: string }
 
-function Shell() {
+const parse = (): Route => {
+  const m = location.hash.replace(/^#\/?/, "").split("/");
+  if (m[0] === "p" && m[1]) return { pid: m[1], view: (m[2] as View) || "home", arg: decodeURIComponent(m.slice(3).join("/")) };
+  return { pid: null, view: "home", arg: "" };
+};
+const go = (pid: string | null, view: View = "home", arg = "") => { location.hash = pid ? `#/p/${pid}/${view}${arg ? `/${encodeURIComponent(arg)}` : ""}` : "#/projects"; };
+
+const applyTheme = (t: string) => {
+  document.documentElement.dataset.theme = t === "dark" ? "dark" : "light";
+  try { localStorage.setItem("asm.theme", t); } catch { /* ignore */ }
+};
+try { applyTheme(localStorage.getItem("asm.theme") || "light"); } catch { /* ignore */ }
+
+function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }) {
   const toast = useToast();
-  const [health, setHealth] = useState<Health | null>(null);
+  const [route, setRoute] = useState<Route>(parse());
   const [settings, setSettings] = useState<Settings | null>(null);
   const [projects, setProjects] = useState<Project[] | null>(null);
-  const [pid, setPid] = useState<string | null>(store.get("asm.project"));
-  const [view, setView] = useState<View>("new");
-  const [jobId, setJobId] = useState<string | null>(null);
   const [files, setFiles] = useState<LibraryFile[]>([]);
+  const [defaults, setDefaults] = useState<any>({});
+  const [pending, setPending] = useState({ files: 0, pages: 0, est_ai_cost: 0 });
   const [tree, setTree] = useState<TreeNode[]>([]);
+  const [subs, setSubs] = useState<Sub[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [projModal, setProjModal] = useState<"new" | "edit" | null>(null);
+  const [menu, setMenu] = useState(false);
+  const [theme, setThemeState] = useState<string>(user.prefs?.theme || (document.documentElement.dataset.theme as string) || "light");
+  const [prefill, setPrefill] = useState<Prefill | null>(null);
   const [reviewKey, setReviewKey] = useState(0);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<string>(route.view);
+  viewRef.current = route.view;
 
-  const project = projects?.find((p) => p.id === pid) || null;
-
-  const loadProjects = useCallback(async () => {
-    const ps = await api.projects();
-    setProjects(ps);
-    if (ps.length && (!pid || !ps.some((p) => p.id === pid))) setPid(ps[0].id);
-    return ps;
-  }, [pid]);
-
+  useEffect(() => { const h = () => setRoute(parse()); window.addEventListener("hashchange", h); return () => window.removeEventListener("hashchange", h); }, []);
+  useEffect(() => { applyTheme(theme); }, [theme]);
   useEffect(() => {
-    api.health().then(setHealth).catch(() => toast("Cannot reach the ASM backend. Is it running?", "bad"));
+    if (!menu) return;
+    const h = (e: MouseEvent) => { if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenu(false); };
+    document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h);
+  }, [menu]);
+  const setTheme = (t: string) => { setThemeState(t); api.saveSettings({ theme: t }).catch(() => {}); };
+
+  const loadProjects = useCallback(async () => { const ps = await api.projects(); setProjects(ps); return ps; }, []);
+  useEffect(() => {
     api.settings().then((s) => { setSettings(s); if (!s.api_key_set && !s.mock) setShowSettings(true); }).catch(() => {});
     loadProjects().catch(() => {});
   }, []);
-  useEffect(() => { if (pid) store.set("asm.project", pid); }, [pid]);
+
+  const pid = route.pid;
+  const project = projects?.find((p) => p.id === pid) || null;
 
   const loadLibrary = useCallback(async () => {
-    if (!pid) return;
+    if (!pid) return null;
     const lib = await api.library(pid);
-    setFiles(lib.files);
+    setFiles(lib.files); setDefaults(lib.defaults || {}); setPending(lib.pending);
     setProjects((ps) => ps?.map((p) => (p.id === pid ? { ...p, library: lib.summary } : p)) || ps);
     return lib;
   }, [pid]);
+  const loadSubs = useCallback(() => { if (pid) api.subs(pid).then(setSubs).catch(() => {}); }, [pid]);
 
-  // poll the library while cataloguing; refresh the tree when it settles
   useEffect(() => {
     if (!pid) return;
     let alive = true;
     let lastReady = -1;
+    loadSubs();
     const tick = async () => {
       const lib = await loadLibrary().catch(() => null);
-      if (!alive || !lib) return;
-      if (lib.summary.ready !== lastReady) { lastReady = lib.summary.ready; api.tree(pid).then(setTree).catch(() => {}); }
-      setTimeout(tick, lib.summary.processing ? 2000 : 8000);
+      if (!alive) return;
+      if (lib && lib.summary.ready !== lastReady) { lastReady = lib.summary.ready; api.tree(pid).then(setTree).catch(() => {}); }
+      setTimeout(tick, lib?.summary.processing || viewRef.current === "library" ? 2500 : 10000);
     };
     tick();
     return () => { alive = false; };
   }, [pid]);
 
-  const openJob = (id: string) => { setJobId(id); setView("run"); };
-  const started = (j: Job) => { openJob(j.id); toast("Review started", "info"); };
-  const apiReady = !!settings?.api_key_set || !!settings?.mock;
+  const openRun = (id: string) => pid && go(pid, "run", id);
+  const started = (j: Job) => { toast("Review started", "info"); go(j.project_id, "run", j.id); };
+  const newReview = (p?: Prefill) => { setPrefill(p || null); setReviewKey((k) => k + 1); pid && go(pid, "new"); };
+  const nav = (v: string, arg?: any) => pid && go(pid, v as View, arg || "");
+
+  const navItems: [View, string, string][] = [["home", "Home", "home"], ["submittals", "Submittals", "list"], ["new", "New Submittal Review", "play"], ["library", "Project Library", "book"]];
 
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">
-          <span className="logo" aria-hidden="true"><svg viewBox="0 0 32 32" width="28" height="28"><rect width="32" height="32" rx="7" fill="var(--brand-orange)" /><path d="M9 24 16 7l7 17h-4l-1.4-3.6h-3.3L13 24zm5.4-6.5h2.3L15.6 14z" fill="#fff" /></svg></span>
-          <span className="wordmark">AJAX</span><span className="product">Submittal Manager</span>
-        </div>
-        {project && (
+        <button className="brand" onClick={() => go(null)} aria-label="All projects"><Logo size={28} /><span className="wordmark">AJAX</span><span className="product">Submittal Manager</span></button>
+        {projects && projects.length > 0 && (
           <div className="proj-pill">
-            <select aria-label="Project" value={pid || ""} onChange={(e) => { setPid(e.target.value); setView("new"); setReviewKey((k) => k + 1); }}>
-              {projects?.map((p) => <option key={p.id} value={p.id}>{p.number ? `${p.number} · ` : ""}{p.name}</option>)}
+            <Icon name="building" size={16} />
+            <select aria-label="Project" value={pid || ""} onChange={(e) => e.target.value ? go(e.target.value) : go(null)}>
+              <option value="">All projects</option>
+              {projects.map((p) => <option key={p.id} value={p.id}>{p.number ? `${p.number}  ` : ""}{p.name}</option>)}
             </select>
           </div>
         )}
         <span className="grow" />
-        <button className={`status-pill ${apiReady ? (settings?.mock ? "warn" : "ok") : "bad"}`} onClick={() => setShowSettings(true)}>
-          <span className="dot" />{settings?.mock ? "Offline demo" : settings?.api_key_set ? "Claude API connected" : "API key needed"}
-        </button>
-        <button className="icon-btn" onClick={() => setShowSettings(true)} aria-label="Settings"><Icon name="gear" /></button>
+        <button className="top-btn" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
+          <Icon name={theme === "dark" ? "sun" : "moon"} size={17} /></button>
+        {settings && !settings.api_key_set && !settings.mock && <button className="top-warn" onClick={() => setShowSettings(true)}>Add API key</button>}
+        {settings?.mock && <button className="top-warn" onClick={() => setShowSettings(true)}>Offline demo</button>}
+        <div className="usermenu" ref={menuRef}>
+          <button className="avatar-btn" onClick={() => setMenu(!menu)} aria-expanded={menu} aria-label="Account menu">
+            <span className="avatar">{(user.display_name || user.username).slice(0, 1).toUpperCase()}</span><span className="uname">{user.display_name}</span><Icon name="down" size={14} />
+          </button>
+          {menu && (
+            <div className="menu">
+              <div className="menu-head"><b>{user.display_name}</b><span className="muted tiny">{user.username}</span></div>
+              <button onClick={() => { setMenu(false); setShowSettings(true); }}><Icon name="gear" size={16} /> Settings</button>
+              <button onClick={() => { setMenu(false); onSignOut(); }}><Icon name="logout" size={16} /> Sign out</button>
+            </div>
+          )}
+        </div>
       </header>
 
       <div className="body">
-        <nav className="sidebar" aria-label="Main">
-          <div className="side-section">
-            <div className="side-label">Project</div>
-            {project ? (
-              <button className="side-project" onClick={() => setProjModal("edit")}>
-                <b>{project.name}</b><span className="muted small">{project.number ? `#${project.number} · ` : ""}{project.ae_firm || "A/E not set"}</span>
-              </button>
-            ) : <p className="muted small">No project yet</p>}
-          </div>
-          <div className="side-nav">
-            <NavBtn icon="play" label="New review" active={view === "new"} onClick={() => { setView("new"); }} disabled={!project} />
-            <NavBtn icon="book" label="Project library" active={view === "library"} onClick={() => setView("library")} disabled={!project}
-              badge={project?.library.processing ? <span className="spinner spinner-brand" /> : project ? <span className="nav-count">{project.library.sections + project.library.sheets}</span> : null} />
-            <NavBtn icon="history" label="Review history" active={view === "history"} onClick={() => setView("history")} disabled={!project} />
-            {jobId && <NavBtn icon="layers" label="Current run" active={view === "run"} onClick={() => setView("run")} />}
-          </div>
-          <div className="side-section">
-            <div className="side-label">All projects</div>
-            {projects?.map((p) => (
-              <button key={p.id} className={`side-link ${p.id === pid ? "on" : ""}`} onClick={() => { setPid(p.id); setView("new"); setReviewKey((k) => k + 1); }}>
-                <span className="mono small">{p.number || "—"}</span> {p.name}
-              </button>
-            ))}
-            <Button variant="ghost" size="sm" icon="plus" onClick={() => setProjModal("new")}>New project</Button>
-          </div>
-          <div className="side-foot muted tiny">v{health?.version} · AI-assisted contractor review - a qualified person verifies before submission.</div>
-        </nav>
+        {project && (
+          <nav className="sidebar" aria-label="Project">
+            <button className="side-project" onClick={() => go(pid, "home")}>
+              <span className="mono tiny side-num">{project.number || "Project"}</span><b>{project.name}</b>
+            </button>
+            <div className="side-nav">
+              {navItems.map(([v, label, icon]) => (
+                <button key={v} className={`nav-btn ${route.view === v ? "on" : ""}`} onClick={() => v === "new" ? newReview() : go(pid, v)} aria-current={route.view === v ? "page" : undefined}>
+                  <Icon name={icon} size={17} /><span>{label}</span>
+                  {v === "library" && project.library.processing > 0 && <span className="spinner spinner-brand" />}
+                  {v === "library" && !project.library.processing && project.library.unprocessed > 0 && <span className="nav-dot" title="Files waiting to be processed" />}
+                </button>
+              ))}
+              {route.view === "run" && <button className="nav-btn on"><Icon name="layers" size={17} /><span>Review</span></button>}
+            </div>
+            <button className="side-all" onClick={() => go(null)}><Icon name="chevron" size={14} className="flip" /> All projects</button>
+          </nav>
+        )}
 
         <main className="main">
-          {projects && !projects.length && (
-            <div className="page">
-              <div className="welcome">
-                <h1>Welcome to Ajax Submittal Manager</h1>
-                <p className="muted">First-pass submittal review against your project's own specs and drawings, with Bluebeam-editable markups and a concise review memo.</p>
-                <ol className="welcome-steps">
-                  <li><b>Create a project</b> - name, number, A/E and contractor fill every cover sheet.</li>
-                  <li><b>Load the library once</b> - drop the project manual, drawings and addenda; ASM catalogues them.</li>
-                  <li><b>Run a review</b> - drop the submittal, confirm the reference scope, add instructions, run.</li>
-                </ol>
-                <Button variant="primary" size="lg" icon="plus" onClick={() => setProjModal("new")}>Create your first project</Button>
-                {!apiReady && <p className="muted small mt">Then add your Anthropic API key in <button className="link-btn" onClick={() => setShowSettings(true)}>Settings</button> (or turn on offline demo mode to try it).</p>}
-              </div>
-            </div>
-          )}
+          {!pid && projects && <ProjectsPage projects={projects} onOpen={(id) => go(id)} onNew={() => setProjModal("new")} />}
+          {pid && projects && !project && <div className="page"><div className="panel empty">This project was not found. <button className="link-btn" onClick={() => go(null)}>Back to projects</button></div></div>}
           {project && (
             <>
-              <div style={{ display: view === "new" ? "block" : "none" }}>
-                <NewReview key={`${project.id}-${reviewKey}`} project={project} tree={tree} library={files} onLibraryChanged={loadLibrary}
-                  onStarted={started} settingsMock={!!settings?.mock} apiKeySet={!!settings?.api_key_set} defaultMode={settings?.review_mode} />
+              <div style={{ display: route.view === "new" ? "block" : "none" }}>
+                <NewReview key={`${project.id}-${reviewKey}`} project={project} tree={tree} library={files} defaults={defaults} subs={subs} onSubsChanged={loadSubs}
+                  onStarted={started} settingsMock={!!settings?.mock} apiKeySet={!!settings?.api_key_set} defaultMode={settings?.review_mode}
+                  goLibrary={(t) => go(pid, "library", t)} prefill={prefill} />
               </div>
-              {view === "library" && <Library project={project} files={files} tree={tree} onChanged={loadLibrary} />}
-              {view === "history" && <History project={project} onOpen={openJob} />}
-              {view === "run" && jobId && <RunView jobId={jobId} onRerun={(j) => openJob(j.id)} onNew={() => { setView("new"); setReviewKey((k) => k + 1); }} />}
+              {route.view === "home" && <ProjectHome project={project} onNav={nav} onOpenRun={openRun} onEdit={() => setProjModal("edit")} />}
+              {route.view === "submittals" && <SubmittalsPage key={route.arg} project={project} initialFilter={route.arg} onOpenRun={openRun} onNew={newReview} />}
+              {route.view === "library" && <Library project={project} files={files} tree={tree} defaults={defaults} pending={pending}
+                onChanged={() => { loadLibrary(); loadSubs(); }} tab={(route.arg as LibTab) || "info"} setTab={(t) => go(pid, "library", t)} />}
+              {route.view === "run" && route.arg && <RunView jobId={route.arg} onRerun={(j) => openRun(j.id)} onNew={() => newReview()} />}
             </>
           )}
         </main>
       </div>
 
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} onSaved={(s) => { setSettings(s); api.health().then(setHealth); }} />}
+      {showSettings && <SettingsModal theme={theme} setTheme={setThemeState} onClose={() => setShowSettings(false)} onSaved={(s) => setSettings(s)} />}
       {projModal && (
         <ProjectModal project={projModal === "edit" ? project || undefined : undefined} onClose={() => setProjModal(null)}
-          onSaved={(p) => { loadProjects().then(() => setPid(p.id)); toast(projModal === "new" ? "Project created - add the spec book and drawings to its library" : "Project saved", "ok"); if (projModal === "new") setView("new"); }}
-          onDelete={project ? async () => { await api.deleteProject(project.id); setProjModal(null); setPid(null); loadProjects(); } : undefined} />
+          onSaved={(p) => { loadProjects().then(() => go(p.id, projModal === "new" ? "library" : "home")); toast(projModal === "new" ? "Project created. Add its specs and drawings to the Project Library." : "Project saved", "ok"); }}
+          onDelete={project ? async () => { await api.deleteProject(project.id); setProjModal(null); go(null); loadProjects(); } : undefined} />
       )}
     </div>
   );
 }
 
-function NavBtn({ icon, label, active, onClick, disabled, badge }: { icon: string; label: string; active: boolean; onClick: () => void; disabled?: boolean; badge?: React.ReactNode }) {
-  return (
-    <button className={`nav-btn ${active ? "on" : ""}`} onClick={onClick} disabled={disabled} aria-current={active ? "page" : undefined}>
-      <Icon name={icon} size={17} /><span>{label}</span>{badge}
-    </button>
-  );
+function Gate() {
+  const [state, setState] = useState<{ loading: boolean; user: User | null; hasUsers: boolean; version: string }>({ loading: true, user: null, hasUsers: true, version: "" });
+  const check = () => api.status().then((s) => {
+    setState({ loading: false, user: s.user, hasUsers: s.has_users, version: s.version });
+    if (s.user?.prefs?.theme) applyTheme(s.user.prefs.theme);
+  }).catch(() => setState((x) => ({ ...x, loading: false })));
+  useEffect(() => { check(); const h = () => check(); window.addEventListener("asm:signed-out", h); return () => window.removeEventListener("asm:signed-out", h); }, []);
+  if (state.loading) return <div className="boot"><span className="spinner spinner-brand" /></div>;
+  if (!state.user) return <Login hasUsers={state.hasUsers} version={state.version} onSignedIn={(u) => { if (u.prefs?.theme) applyTheme(u.prefs.theme); setState((x) => ({ ...x, user: u })); }} />;
+  return <Shell key={state.user.id} user={state.user} onSignOut={async () => { await api.logout().catch(() => {}); location.hash = ""; setState((x) => ({ ...x, user: null, hasUsers: true })); }} />;
 }
 
 export default function App() {
-  return <ToastProvider><Shell /></ToastProvider>;
+  return <ToastProvider><Gate /></ToastProvider>;
 }

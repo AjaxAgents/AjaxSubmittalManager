@@ -63,6 +63,26 @@ CREATE TABLE IF NOT EXISTS retrievals (
   id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, stage TEXT, tool TEXT, item_id TEXT,
   pages INTEGER, tokens INTEGER, in_scope INTEGER, allowed INTEGER, reason TEXT, ts REAL
 );
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, display_name TEXT DEFAULT '', pw_hash TEXT NOT NULL,
+  api_key TEXT DEFAULT '', prefs TEXT DEFAULT '{}', is_admin INTEGER DEFAULT 0, created_at REAL, last_login REAL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  token TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at REAL, expires_at REAL
+);
+CREATE TABLE IF NOT EXISTS subcontractors (
+  id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, contact TEXT DEFAULT '',
+  email TEXT DEFAULT '', phone TEXT DEFAULT '', divisions TEXT DEFAULT '[]', spec_sections TEXT DEFAULT '[]',
+  notes TEXT DEFAULT '', created_at REAL
+);
+CREATE TABLE IF NOT EXISTS submittals (
+  id TEXT PRIMARY KEY, project_id TEXT NOT NULL, spec_section TEXT NOT NULL, seq INTEGER DEFAULT 1,
+  revision TEXT DEFAULT '0', title TEXT DEFAULT '', type TEXT DEFAULT 'Product Data', spec_title TEXT DEFAULT '',
+  subcontractor_id TEXT DEFAULT '', status TEXT DEFAULT 'draft', required_date TEXT DEFAULT '',
+  latest_job_id TEXT DEFAULT '', options TEXT DEFAULT '{}', created_by TEXT DEFAULT '', created_at REAL, updated_at REAL
+);
+CREATE INDEX IF NOT EXISTS ix_subs_project ON subcontractors(project_id);
+CREATE INDEX IF NOT EXISTS ix_submittals_project ON submittals(project_id);
 CREATE INDEX IF NOT EXISTS ix_catalog_kind ON catalog(project_id, kind);
 CREATE INDEX IF NOT EXISTS ix_files_project ON library_files(project_id);
 CREATE INDEX IF NOT EXISTS ix_jobs_project ON jobs(project_id);
@@ -96,9 +116,23 @@ def conn() -> Iterator[sqlite3.Connection]:
             c.close()
 
 
+MIGRATIONS = [
+    "ALTER TABLE projects ADD COLUMN owner_id TEXT DEFAULT ''",
+    "ALTER TABLE library_files ADD COLUMN meta TEXT DEFAULT '{}'",
+    "ALTER TABLE library_files ADD COLUMN division TEXT DEFAULT ''",
+    "ALTER TABLE jobs ADD COLUMN submittal_id TEXT DEFAULT ''",
+    "ALTER TABLE uploads ADD COLUMN user_id TEXT DEFAULT ''",
+]
+
+
 def init() -> None:
     with conn() as c:
         c.executescript(SCHEMA)
+        for m in MIGRATIONS:
+            try:
+                c.execute(m)
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
 
 def new_id(prefix: str = "") -> str:
@@ -113,7 +147,8 @@ def row(r: sqlite3.Row | None) -> dict[str, Any] | None:
     if r is None:
         return None
     d = dict(r)
-    for k in ("settings", "keywords", "xrefs", "amended_by", "params", "result", "flags", "scope", "meta"):
+    for k in ("settings", "keywords", "xrefs", "amended_by", "params", "result", "flags", "scope", "meta",
+              "divisions", "spec_sections", "prefs", "options"):
         if k in d and isinstance(d[k], str):
             try:
                 d[k] = json.loads(d[k])
@@ -133,11 +168,11 @@ def create_project(**fields: Any) -> dict[str, Any]:
     settings = json.dumps(fields.pop("settings", {}) or {})
     with conn() as c:
         c.execute(
-            "INSERT INTO projects(id,name,number,ae_firm,contractor,owner,address,settings,created_at,updated_at)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO projects(id,name,number,ae_firm,contractor,owner,address,settings,created_at,updated_at,owner_id)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (pid, fields.get("name", "Untitled"), fields.get("number", ""), fields.get("ae_firm", ""),
              fields.get("contractor", ""), fields.get("owner", ""), fields.get("address", ""),
-             settings, now(), now()),
+             settings, now(), now(), fields.get("owner_id", "")),
         )
     return get_project(pid)  # type: ignore[return-value]
 
@@ -160,14 +195,16 @@ def get_project(pid: str) -> dict[str, Any] | None:
         return row(c.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone())
 
 
-def list_projects() -> list[dict[str, Any]]:
+def list_projects(owner_id: str | None = None) -> list[dict[str, Any]]:
     with conn() as c:
-        return rows(c.execute("SELECT * FROM projects ORDER BY updated_at DESC").fetchall())
+        if owner_id is None:
+            return rows(c.execute("SELECT * FROM projects ORDER BY updated_at DESC").fetchall())
+        return rows(c.execute("SELECT * FROM projects WHERE owner_id=? ORDER BY updated_at DESC", (owner_id,)).fetchall())
 
 
 def delete_project(pid: str) -> None:
     with conn() as c:
-        for t in ("library_files", "catalog", "scope_presets", "jobs"):
+        for t in ("library_files", "catalog", "scope_presets", "jobs", "subcontractors", "submittals"):
             c.execute(f"DELETE FROM {t} WHERE project_id=?", (pid,))
         c.execute("DELETE FROM catalog_fts WHERE project_id=?", (pid,))
         c.execute("DELETE FROM projects WHERE id=?", (pid,))
@@ -175,7 +212,8 @@ def delete_project(pid: str) -> None:
 
 # ----------------------------------------------------------------------------- library files
 
-def add_library_file(project_id: str, kind: str, filename: str, path: str, sha: str, pages: int, size: int) -> dict:
+def add_library_file(project_id: str, kind: str, filename: str, path: str, sha: str, pages: int, size: int,
+                     status: str = "queued", meta: dict | None = None) -> dict:
     fid = new_id("f_")
     with conn() as c:
         prev = c.execute("SELECT MAX(version) v FROM library_files WHERE project_id=? AND filename=?",
@@ -183,9 +221,9 @@ def add_library_file(project_id: str, kind: str, filename: str, path: str, sha: 
         version = (prev["v"] or 0) + 1
         c.execute("UPDATE library_files SET superseded=1 WHERE project_id=? AND filename=?", (project_id, filename))
         c.execute(
-            "INSERT INTO library_files(id,project_id,kind,filename,path,sha256,pages,size,status,uploaded_at,version)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (fid, project_id, kind, filename, path, sha, pages, size, "queued", now(), version),
+            "INSERT INTO library_files(id,project_id,kind,filename,path,sha256,pages,size,status,uploaded_at,version,meta)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (fid, project_id, kind, filename, path, sha, pages, size, status, now(), version, json.dumps(meta or {})),
         )
     return get_library_file(fid)  # type: ignore[return-value]
 
@@ -208,6 +246,8 @@ def list_library_files(project_id: str) -> list[dict]:
 
 
 def update_library_file(fid: str, **fields: Any) -> None:
+    if "meta" in fields and not isinstance(fields["meta"], str):
+        fields["meta"] = json.dumps(fields["meta"])
     sets = ", ".join(f"{k}=?" for k in fields)
     with conn() as c:
         c.execute(f"UPDATE library_files SET {sets} WHERE id=?", (*fields.values(), fid))
@@ -324,11 +364,11 @@ def get_scope_preset(project_id: str, spec_section: str) -> dict | None:
 
 # ----------------------------------------------------------------------------- uploads (zones 1, 3, 4)
 
-def add_upload(filename: str, path: str, sha: str, pages: int, size: int, flags: list[str]) -> dict:
+def add_upload(filename: str, path: str, sha: str, pages: int, size: int, flags: list[str], user_id: str = "") -> dict:
     uid = new_id("u_")
     with conn() as c:
-        c.execute("INSERT INTO uploads(id,filename,path,sha256,pages,size,flags,created_at) VALUES(?,?,?,?,?,?,?,?)",
-                  (uid, filename, path, sha, pages, size, json.dumps(flags), now()))
+        c.execute("INSERT INTO uploads(id,filename,path,sha256,pages,size,flags,created_at,user_id) VALUES(?,?,?,?,?,?,?,?,?)",
+                  (uid, filename, path, sha, pages, size, json.dumps(flags), now(), user_id))
     return get_upload(uid)  # type: ignore[return-value]
 
 
@@ -339,11 +379,11 @@ def get_upload(uid: str) -> dict | None:
 
 # ----------------------------------------------------------------------------- jobs
 
-def create_job(project_id: str, params: dict, parent_job: str = "") -> dict:
+def create_job(project_id: str, params: dict, parent_job: str = "", submittal_id: str = "") -> dict:
     jid = new_id("j_")
     with conn() as c:
-        c.execute("INSERT INTO jobs(id,project_id,status,params,created_at,updated_at,parent_job) VALUES(?,?,?,?,?,?,?)",
-                  (jid, project_id, "queued", json.dumps(params), now(), now(), parent_job))
+        c.execute("INSERT INTO jobs(id,project_id,status,params,created_at,updated_at,parent_job,submittal_id) VALUES(?,?,?,?,?,?,?,?)",
+                  (jid, project_id, "queued", json.dumps(params), now(), now(), parent_job, submittal_id))
     return get_job(jid)  # type: ignore[return-value]
 
 
@@ -354,7 +394,7 @@ def get_job(jid: str) -> dict | None:
 
 def list_jobs(project_id: str) -> list[dict]:
     with conn() as c:
-        return rows(c.execute("SELECT id,project_id,status,stage,params,cost,error,created_at,updated_at,parent_job"
+        return rows(c.execute("SELECT id,project_id,status,stage,params,cost,error,created_at,updated_at,parent_job,submittal_id"
                               " FROM jobs WHERE project_id=? ORDER BY created_at DESC", (project_id,)).fetchall())
 
 
@@ -396,3 +436,152 @@ def log_retrieval(job_id: str, stage: str, tool: str, item_id: str, pages: int, 
 def retrievals_for_job(job_id: str) -> list[dict]:
     with conn() as c:
         return rows(c.execute("SELECT * FROM retrievals WHERE job_id=? ORDER BY id", (job_id,)).fetchall())
+
+
+# ----------------------------------------------------------------------------- users & sessions
+
+def create_user(username: str, display_name: str, pw_hash: str, is_admin: bool = False) -> dict:
+    uid = new_id("usr_")
+    with conn() as c:
+        c.execute("INSERT INTO users(id,username,display_name,pw_hash,is_admin,created_at) VALUES(?,?,?,?,?,?)",
+                  (uid, username, display_name, pw_hash, int(is_admin), now()))
+    return get_user(uid)  # type: ignore[return-value]
+
+
+def get_user(uid: str) -> dict | None:
+    with conn() as c:
+        return row(c.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone())
+
+
+def get_user_by_name(username: str) -> dict | None:
+    with conn() as c:
+        return row(c.execute("SELECT * FROM users WHERE lower(username)=lower(?)", (username,)).fetchone())
+
+
+def count_users() -> int:
+    with conn() as c:
+        return c.execute("SELECT COUNT(*) n FROM users").fetchone()["n"]
+
+
+def update_user(uid: str, **fields: Any) -> None:
+    if "prefs" in fields and not isinstance(fields["prefs"], str):
+        fields["prefs"] = json.dumps(fields["prefs"])
+    sets = ", ".join(f"{k}=?" for k in fields)
+    with conn() as c:
+        c.execute(f"UPDATE users SET {sets} WHERE id=?", (*fields.values(), uid))
+
+
+def create_session(token: str, user_id: str, ttl_s: float) -> None:
+    with conn() as c:
+        c.execute("DELETE FROM sessions WHERE expires_at < ?", (now(),))
+        c.execute("INSERT INTO sessions(token,user_id,created_at,expires_at) VALUES(?,?,?,?)",
+                  (token, user_id, now(), now() + ttl_s))
+
+
+def session_user(token: str) -> dict | None:
+    with conn() as c:
+        s = c.execute("SELECT * FROM sessions WHERE token=? AND expires_at > ?", (token, now())).fetchone()
+        if not s:
+            return None
+        return row(c.execute("SELECT * FROM users WHERE id=?", (s["user_id"],)).fetchone())
+
+
+def delete_session(token: str) -> None:
+    with conn() as c:
+        c.execute("DELETE FROM sessions WHERE token=?", (token,))
+
+
+def claim_ownerless_projects(user_id: str) -> int:
+    with conn() as c:
+        cur = c.execute("UPDATE projects SET owner_id=? WHERE owner_id IS NULL OR owner_id=''", (user_id,))
+        return cur.rowcount
+
+
+# ----------------------------------------------------------------------------- subcontractors
+
+def list_subs(project_id: str) -> list[dict]:
+    with conn() as c:
+        return rows(c.execute("SELECT * FROM subcontractors WHERE project_id=? ORDER BY name COLLATE NOCASE",
+                              (project_id,)).fetchall())
+
+
+def get_sub(sid: str) -> dict | None:
+    with conn() as c:
+        return row(c.execute("SELECT * FROM subcontractors WHERE id=?", (sid,)).fetchone())
+
+
+def upsert_sub(project_id: str, data: dict, sid: str | None = None) -> dict:
+    cols = ["name", "contact", "email", "phone", "divisions", "spec_sections", "notes"]
+    vals = [json.dumps(data.get(k) or []) if k in ("divisions", "spec_sections") else (data.get(k) or "") for k in cols]
+    with conn() as c:
+        if sid:
+            c.execute(f"UPDATE subcontractors SET {', '.join(f'{k}=?' for k in cols)} WHERE id=? AND project_id=?",
+                      (*vals, sid, project_id))
+        else:
+            sid = new_id("sub_")
+            c.execute(f"INSERT INTO subcontractors(id,project_id,{','.join(cols)},created_at) VALUES(?,?,{','.join('?' * len(cols))},?)",
+                      (sid, project_id, *vals, now()))
+    return get_sub(sid)  # type: ignore[return-value,arg-type]
+
+
+def delete_sub(sid: str) -> None:
+    with conn() as c:
+        c.execute("DELETE FROM subcontractors WHERE id=?", (sid,))
+
+
+# ----------------------------------------------------------------------------- submittal register
+
+SUBMITTAL_COLS = ["spec_section", "seq", "revision", "title", "type", "spec_title", "subcontractor_id", "status",
+                  "required_date", "latest_job_id", "options", "created_by"]
+
+
+def create_submittal(project_id: str, data: dict) -> dict:
+    sid = new_id("sm_")
+    vals = [json.dumps(data.get(k) or {}) if k == "options" else data.get(k, "" if k != "seq" else 1) for k in SUBMITTAL_COLS]
+    with conn() as c:
+        c.execute(f"INSERT INTO submittals(id,project_id,{','.join(SUBMITTAL_COLS)},created_at,updated_at)"
+                  f" VALUES(?,?,{','.join('?' * len(SUBMITTAL_COLS))},?,?)", (sid, project_id, *vals, now(), now()))
+    return get_submittal(sid)  # type: ignore[return-value]
+
+
+def update_submittal(sid: str, **fields: Any) -> None:
+    if "options" in fields and not isinstance(fields["options"], str):
+        fields["options"] = json.dumps(fields["options"])
+    sets = ", ".join(f"{k}=?" for k in fields)
+    with conn() as c:
+        c.execute(f"UPDATE submittals SET {sets}, updated_at=? WHERE id=?", (*fields.values(), now(), sid))
+
+
+def get_submittal(sid: str) -> dict | None:
+    with conn() as c:
+        return row(c.execute("SELECT * FROM submittals WHERE id=?", (sid,)).fetchone())
+
+
+def find_submittal(project_id: str, spec_section: str, seq: int, revision: str) -> dict | None:
+    with conn() as c:
+        return row(c.execute("SELECT * FROM submittals WHERE project_id=? AND spec_section=? AND seq=? AND revision=?",
+                             (project_id, spec_section, seq, revision)).fetchone())
+
+
+def list_submittals(project_id: str) -> list[dict]:
+    with conn() as c:
+        return rows(c.execute("SELECT * FROM submittals WHERE project_id=? ORDER BY spec_section, seq, revision",
+                              (project_id,)).fetchall())
+
+
+def delete_submittal(sid: str) -> None:
+    with conn() as c:
+        c.execute("DELETE FROM submittals WHERE id=?", (sid,))
+
+
+def next_seq(project_id: str, spec_section: str) -> int:
+    with conn() as c:
+        r = c.execute("SELECT MAX(seq) m FROM submittals WHERE project_id=? AND spec_section=?",
+                      (project_id, spec_section)).fetchone()
+    return int(r["m"] or 0) + 1
+
+
+def jobs_for_submittal(sid: str) -> list[dict]:
+    with conn() as c:
+        return rows(c.execute("SELECT id,status,stage,cost,error,created_at,updated_at,parent_job FROM jobs"
+                              " WHERE submittal_id=? ORDER BY created_at DESC", (sid,)).fetchall())

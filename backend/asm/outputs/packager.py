@@ -16,6 +16,7 @@ from typing import Any
 import pymupdf
 
 from ..config import markup_cfg, settings_cfg
+from ..pdf import cover_template as ctpl
 from ..pdf import pages as gen
 from ..pdf.markup import MarkupEngine
 from ..schemas import MarkupInstruction, SubmittalMap
@@ -93,7 +94,9 @@ def plan_content_order(smap: SubmittalMap, n_pages: int, reorder: bool = True) -
 def build_package(*, out_path: Path, submittal_path: Path, smap: SubmittalMap, cover_info: dict[str, Any],
                   markups: list[MarkupInstruction], deviations: list[dict[str, Any]],
                   spec_excerpt: tuple[Path, int, int, str] | None = None, include_toc: bool = True,
-                  metadata: dict[str, str] | None = None) -> PackageResult:
+                  metadata: dict[str, str] | None = None, cover_template: dict[str, Any] | None = None) -> PackageResult:
+    """cover_template: {"path", "mapping", "include_generated"} - the company cover page becomes page 1 and its
+    boxes are filled by rule; the generated transmittal follows only if include_generated."""
     src = pymupdf.open(submittal_path)
     n = src.page_count
     reorder = bool(settings_cfg().get("output", {}).get("reorder_products", True))
@@ -128,7 +131,19 @@ def build_package(*, out_path: Path, submittal_path: Path, smap: SubmittalMap, c
         info["items"] = [{"label": g["label"], "page": src_to_out.get(g["pages"][0], 0)} for g in groups]
         info["deviations_statement"] = (f"Deviations listed on page {dev_page} ({len(deviations)} item(s)); clouded on the referenced pages."
                                         if deviations else "No deviations.")
-        cv = gen.cover_sheet(doc, info)
+        if cover_template:
+            start = doc.page_count
+            with pymupdf.open(cover_template["path"]) as tdoc:
+                doc.insert_pdf(tdoc, annots=True, widgets=True)
+            n_tpl = doc.page_count - start
+            vals = ctpl.values_from({**info, "page_count": pno - 1 + len(order)})
+            tpl_notes = ctpl.fill(doc, n_tpl, cover_template.get("mapping") or {}, vals)
+            cv = {"pages": n_tpl, "stamp_page": 0, "stamp_y": None, "notes": tpl_notes}
+            if cover_template.get("include_generated"):
+                g = gen.cover_sheet(doc, info)
+                cv = {"pages": n_tpl + g["pages"], "stamp_page": g["stamp_page"], "stamp_y": g["stamp_y"], "notes": tpl_notes}
+        else:
+            cv = gen.cover_sheet(doc, info)
         n_toc = gen.table_of_contents(doc, toc_entries, sub_no) if use_toc else 0
         if spec_excerpt:
             with pymupdf.open(spec_excerpt[0]) as sdoc:
@@ -141,7 +156,8 @@ def build_package(*, out_path: Path, submittal_path: Path, smap: SubmittalMap, c
                 rows.append({**d, "page": ", ".join(str(x) for x in pg[:3])})
             n_dev = gen.deviation_summary(doc, rows, sub_no)
         return {"cover": cv["pages"], "toc": n_toc, "dev": n_dev, "stamp_page": cv["stamp_page"],
-                "stamp_y": cv["stamp_y"], "toc_entries": toc_entries, "dev_page": dev_page}
+                "stamp_y": cv["stamp_y"], "toc_entries": toc_entries, "dev_page": dev_page,
+                "tpl_notes": cv.get("notes", [])}
 
     # pass 1: measure front matter with provisional numbers; pass 2: render for real
     scratch = pymupdf.open()
@@ -190,8 +206,15 @@ def build_package(*, out_path: Path, submittal_path: Path, smap: SubmittalMap, c
         except Exception as exc:
             warnings.append(f"Markup {m.id} failed: {exc}")
     # review stamp on the last cover page, in the reserved zone under the cover content
-    sy = min(fm["stamp_y"] + 6, 792 - 60 - 100)
-    stamp_rect = [42, sy, 300, sy + 100]
+    if fm["stamp_y"] is None:  # company cover template: nearest whitespace to the bottom-right corner
+        tp = out[fm["stamp_page"]]
+        corner = pymupdf.Rect(tp.rect.width - 2, tp.rect.height - 2, tp.rect.width - 1, tp.rect.height - 1)
+        slot = eng._free_slot(tp, corner, 258, 100)
+        stamp_rect = [slot.x0, slot.y0, slot.x1, slot.y1]
+    else:
+        sy = min(fm["stamp_y"] + 6, 792 - 60 - 100)
+        stamp_rect = [42, sy, 300, sy + 100]
+    warnings += [f"Cover template: {n}" for n in fm.get("tpl_notes", [])]
     eng.apply(MarkupInstruction(id="STAMP-01", page=fm["stamp_page"] + 1, type="stamp", subject="review_stamp",
                                 rect=stamp_rect, text=markup_cfg().get("stamp_text", "")))
 

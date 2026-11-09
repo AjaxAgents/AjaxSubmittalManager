@@ -14,7 +14,7 @@ const STAGES: [string, string, string][] = [
 ];
 const STAGES_SINGLE: [string, string, string][] = [
   STAGES[0], STAGES[1],
-  ["single", "Reviewer (single agent)", "One Opus pass: build the checklist, prove and challenge each requirement"],
+  ["single", "Reviewer (single pass)", "Build the checklist, then prove and challenge each requirement"],
   ["adjudicator", "Verify citations", "Check every cited page and quote; unverified calls go to Human Review"],
   STAGES[6], STAGES[7],
 ];
@@ -74,7 +74,7 @@ export function RunView({ jobId, onRerun, onNew }: { jobId: string; onRerun: (j:
       <div className="page-head">
         <div>
           <h1>{running ? "Reviewing…" : status === "error" ? "Run failed" : status === "cancelled" ? "Run cancelled" : "Review"}</h1>
-          <p className="muted mono">{job?.params?.spec_section} {job?.params?.spec_title} · Submittal {job?.params?.submittal_no || "-"} Rev {job?.params?.revision}{mode === "single" ? " · single agent" : " · cross-examined"}{mock && " · offline demo mode"}</p>
+          <p className="muted mono">{job?.params?.spec_section} {job?.params?.spec_title}, submittal {job?.params?.submittal_no || "-"} rev {job?.params?.revision}{mode === "single" ? ", single pass" : ", cross-examined"}{mock && ", offline demo mode"}</p>
         </div>
         <div className="row gap">
           {running && <Button variant="danger" icon="stop" onClick={() => api.cancel(jobId).then(() => toast("Cancelling after the current call…"))}>Cancel</Button>}
@@ -104,7 +104,7 @@ export function RunView({ jobId, onRerun, onNew }: { jobId: string; onRerun: (j:
         <div className="col gap">
           <Card title="Cost" icon="spark">
             <div className="meter"><div className="meter-fill" style={{ width: `${pct}%` }} /></div>
-            <div className="meter-legend"><b>${spent.toFixed(2)}</b><span className="muted">of ${cap ? cap.toFixed(2) : "—"} job budget · at 80% Opus stages switch to Sonnet</span></div>
+            <div className="meter-legend"><b>${spent.toFixed(2)}</b><span className="muted">of ${cap ? cap.toFixed(2) : "—"} budget for this review</span></div>
           </Card>
           <Card title="Activity" icon="history" sub="Every retrieval is logged and listed in the TXT under Scope Checked.">
             <div className="log">
@@ -157,14 +157,14 @@ function Results({ job, onRerun, onNew }: { job: Job; onRerun: (j: Job) => void;
     <div className="page page-results">
       <div className="res-head">
         <div className="res-title">
-          <span className="eyebrow">Review complete · {fmtTime(job.updated_at)} · {r.review_mode === "single" ? "single agent" : "cross-examined"}{r.mock && " · offline demo mode"}</span>
+          <span className="res-meta">Reviewed {fmtTime(job.updated_at)}, {r.review_mode === "single" ? "single pass" : "cross-examined"}{r.mock && ", offline demo mode"}</span>
           <h1 className="mono">{r.pdf_name}</h1>
           <div className="res-counts">
             <Badge tone="ok">{counts.compliant || 0} compliant</Badge>
             <Badge tone="bad">{counts.non_compliant || 0} non-compliant</Badge>
             <Badge tone="warn">{nHR} human review</Badge>
             {!!counts.not_applicable && <Badge>{counts.not_applicable} N/A</Badge>}
-            <span className="muted small">{r.pages} pages · {r.markups?.length || 0} markups · ${Number(r.cost || 0).toFixed(2)} · {(r.models || []).map((m: string) => m.replace("claude-", "")).join(", ") || "offline"}</span>
+            <span className="muted small">{r.pages} pages, {r.markups?.length || 0} markups, ${Number(r.cost || 0).toFixed(2)}</span>
           </div>
         </div>
         <div className="res-actions">
@@ -230,7 +230,7 @@ function Results({ job, onRerun, onNew }: { job: Job; onRerun: (j: Job) => void;
                           <td className="mono nowrap">{v.txt_id}</td>
                           <td>
                             <div className="req-text">{q.text}</div>
-                            <div className="req-src mono">{q.source?.section} {q.source?.article}{q.amended_by?.length ? ` · ${q.amended_by.join(", ").replace(/AM:/g, "")}` : ""}</div>
+                            <div className="req-src mono">{q.source?.section} {q.source?.article}{q.amended_by?.length ? `, ${q.amended_by.join(", ").replace(/AM:/g, "")}` : ""}</div>
                             <div className="req-sum">{v.summary}</div>
                           </td>
                           <td><Badge tone={RES[v.result].tone}>{RES[v.result].label}</Badge>{v.decided_by === "adjudicator" && <div className="muted tiny">adjudicated</div>}</td>
@@ -294,7 +294,7 @@ function Results({ job, onRerun, onNew }: { job: Job; onRerun: (j: Job) => void;
                 <tbody>
                   {(r.markups || []).map((m: any) => (
                     <tr key={m.id} className="clickable" onClick={() => go(m.page)}>
-                      <td className="mono">{m.id}</td><td>{m.subject} · {m.type}<div className="muted tiny">{m.text}</div>{m.warning && <div className="t-warn tiny">{m.warning}</div>}</td>
+                      <td className="mono">{m.id}</td><td>{m.subject} ({m.type})<div className="muted tiny">{m.text}</div>{m.warning && <div className="t-warn tiny">{m.warning}</div>}</td>
                       <td>{m.layer === "ae" ? <Badge tone="info">A/E</Badge> : <Badge>internal</Badge>}</td><td className="mono">{m.page}</td>
                     </tr>
                   ))}

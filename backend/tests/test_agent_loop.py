@@ -39,7 +39,7 @@ def test_tool_loop_retries_invalid_then_succeeds(data, monkeypatch):
         msg(ToolUseBlock(type="tool_use", id="t3", name="submit_result", input={"summary": "ok", "keywords": ["UL 10C"]})),
     ]
     fake = FakeClient(script)
-    monkeypatch.setattr(llm, "client", lambda: fake)
+    monkeypatch.setattr(llm, "client", lambda *a, **k: fake)
     tracker = llm.CostTracker.for_job(None, None, usd_cap=5)
     calls = []
     tool = Tool("lookup", "d", {"type": "object", "properties": {"q": {"type": "string"}}}, lambda a: calls.append(a) or "result text")

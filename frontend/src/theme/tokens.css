@@ -1,32 +1,64 @@
-/* Ajax Submittal Manager design tokens (spec V2 section 5). Procore-inspired white/orange; Ajax branding only. */
+/* Ajax Submittal Manager tokens. Procore-inspired: asphalt chrome, white work surface, one orange.
+   Dark mode swaps surfaces only; the brand orange and the status colours keep their meaning. */
 :root {
   --brand-orange: #ff5200;
-  --brand-orange-hover: #e04800;
-  --brand-orange-pressed: #c23e00;
-  --brand-orange-tint: #fff1ea;
-  --brand-orange-ring: rgba(255, 82, 0, 0.28);
+  --brand-orange-hover: #e84a00;
+  --brand-orange-pressed: #c43f00;
+  --brand-orange-text: #c43f00;          /* orange used as text on light surfaces (AA) */
+  --brand-orange-tint: #fff0e8;
+  --brand-orange-ring: rgba(255, 82, 0, 0.30);
+
+  --chrome: #1e2326;                     /* asphalt: top bar */
+  --chrome-2: #2b3236;
+  --chrome-text: #f3f5f6;
+  --chrome-muted: #a9b4ba;
+
+  --canvas: #eceef0;                     /* concrete */
   --surface: #ffffff;
-  --canvas: #f5f6f7;
-  --border: #d6dadc;
-  --border-soft: #e6e9eb;
-  --text: #232729;
-  --text-muted: #6a767c;
-  --text-faint: #97a1a6;
-  --ok: #1f8a4c;
-  --ok-tint: #e8f5ee;
-  --warn: #b77f00;          /* text-safe amber (#E5A100 used for fills) */
-  --warn-fill: #e5a100;
-  --warn-tint: #fdf5e1;
-  --bad: #d6302c;
-  --bad-tint: #fcebea;
-  --info: #1f5fbf;
-  --info-tint: #e9f0fb;
-  --radius: 8px;
-  --radius-lg: 12px;
-  --shadow-sm: 0 1px 2px rgba(16, 24, 32, 0.06);
-  --shadow: 0 1px 3px rgba(16, 24, 32, 0.08), 0 4px 12px rgba(16, 24, 32, 0.04);
-  --shadow-lg: 0 8px 28px rgba(16, 24, 32, 0.14);
+  --surface-2: #f6f7f8;
+  --surface-sunk: #f1f3f4;
+  --border: #c9d0d4;
+  --border-soft: #dde2e5;
+  --text: #1b2023;
+  --text-muted: #56636a;
+  --text-faint: #8a969c;
+
+  --ok: #1a7f45;      --ok-tint: #e3f4ea;
+  --warn: #9a6a00;    --warn-fill: #e5a100;  --warn-tint: #fcf2da;
+  --bad: #c9282a;     --bad-tint: #fbe7e6;
+  --info: #1f5fbf;    --info-tint: #e7effb;
+
+  --radius: 6px;
+  --radius-lg: 10px;
+  --shadow-sm: 0 1px 2px rgba(20, 26, 30, 0.08);
+  --shadow: 0 1px 2px rgba(20, 26, 30, 0.08), 0 6px 18px rgba(20, 26, 30, 0.06);
+  --shadow-lg: 0 12px 36px rgba(20, 26, 30, 0.22);
   --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
-  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --brand-orange-text: #ff7a3d;
+  --brand-orange-tint: #3a2116;
+  --brand-orange-ring: rgba(255, 98, 26, 0.38);
+  --chrome: #0f1214;
+  --chrome-2: #1a1f22;
+  --canvas: #15191b;
+  --surface: #1d2225;
+  --surface-2: #232a2d;
+  --surface-sunk: #191d20;
+  --border: #3a4348;
+  --border-soft: #2c3438;
+  --text: #e9edef;
+  --text-muted: #a3afb5;
+  --text-faint: #75828a;
+  --ok: #4cc382;      --ok-tint: #173326;
+  --warn: #f0bb3d;    --warn-tint: #3a2f12;
+  --bad: #ff6b65;     --bad-tint: #3d1b1b;
+  --info: #7aa8f0;    --info-tint: #1a2840;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 18px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 12px 36px rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
 }

@@ -66,10 +66,9 @@ def build_txt(*, project: dict[str, Any], params: dict[str, Any], file_base: str
     add(wrap("AJAX SUBMITTAL MANAGER - REVIEW NOTES"))
     add(wrap(f"Project: {project.get('number') or ''} {project.get('name') or ''}".replace("  ", " ").strip()
              + f" | Submittal {file_base}"))
-    add(wrap(f"Prepared: {datetime.now().strftime('%Y-%m-%d %H:%M')} | Run ID: {run_id} | Models: {models_label(models)}"
+    add(wrap(f"Prepared: {datetime.now().strftime('%Y-%m-%d %H:%M')} | Run ID: {run_id}"
              f" | Cost: ${cost:.2f}"))
     add(wrap(f"RECOMMENDATION: {recommendation(len(nc), n_hr)}"))
-    add(wrap("AI-assisted contractor review. A qualified person must verify before submission. Not an A/E review."))
     add([""])
 
     add(["SCOPE CHECKED"])
