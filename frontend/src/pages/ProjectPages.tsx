@@ -1,11 +1,22 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { api, DIVISION_NAMES, fmtDate, fmtTime, Project, STATUS_LABEL, Submittal } from "../api";
 import { Badge, Button, Icon, useToast } from "../components/ui";
+import { SortSelect } from "../components/Pickers";
 import type { Prefill } from "./NewReview";
 
 // ===================================================================== all projects
 
 export function ProjectsPage({ projects, onOpen, onNew }: { projects: Project[]; onOpen: (id: string) => void; onNew: () => void }) {
+  const [q, setQ] = useState("");
+  const [sort, setSort] = useState("recent");
+  const shown = useMemo(() => {
+    const ql = q.trim().toLowerCase();
+    const f = ql ? projects.filter((p) => `${p.number || ""} ${p.name} ${p.ae_firm || ""} ${p.contractor || ""}`.toLowerCase().includes(ql)) : [...projects];
+    if (sort === "name") f.sort((a, b) => a.name.localeCompare(b.name));
+    else if (sort === "number") f.sort((a, b) => (a.number || "").localeCompare(b.number || "", undefined, { numeric: true }));
+    else f.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+    return f;
+  }, [projects, q, sort]);
   return (
     <div className="page">
       <header className="page-head"><h1>Projects</h1><Button variant="primary" icon="plus" onClick={onNew}>New project</Button></header>
@@ -20,8 +31,18 @@ export function ProjectsPage({ projects, onOpen, onNew }: { projects: Project[];
           <Button variant="primary" size="lg" icon="plus" onClick={onNew}>Create a project</Button>
         </div>
       ) : (
+        <>
+        <div className="filterbar gap-b">
+          <div className="search"><Icon name="search" size={15} />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a project by name, number or architect" aria-label="Find a project"
+              onKeyDown={(e) => { if (e.key === "Enter" && shown.length === 1) onOpen(shown[0].id); }} />
+            {q && <button className="icon-btn" aria-label="Clear" onClick={() => setQ("")}><Icon name="x" size={14} /></button>}
+          </div>
+          <SortSelect value={sort} onChange={setSort} options={[["recent", "Recently updated"], ["name", "Name"], ["number", "Project number"]]} />
+        </div>
+        {!shown.length && <div className="panel empty">No project matches "{q}".</div>}
         <div className="proj-grid">
-          {projects.map((p) => (
+          {shown.map((p) => (
             <button key={p.id} className="proj-card" onClick={() => onOpen(p.id)}>
               <span className="proj-num mono">{p.number || "No number"}</span>
               <b className="proj-name">{p.name}</b>
@@ -30,6 +51,7 @@ export function ProjectsPage({ projects, onOpen, onNew }: { projects: Project[];
             </button>
           ))}
         </div>
+        </>
       )}
     </div>
   );
@@ -122,6 +144,7 @@ export function SubmittalsPage({ project, initialFilter, onOpenRun, onNew }: { p
   const [status, setStatus] = useState(initialFilter && !initialFilter.startsWith("div:") ? initialFilter : "");
   const [div, setDiv] = useState(initialFilter?.startsWith("div:") ? initialFilter.slice(4) : "");
   const [sub, setSub] = useState("");
+  const [sort, setSort] = useState("number");
   const [closed, setClosed] = useState<Set<string>>(new Set());
   const load = () => api.submittals(project.id).then(setRows).catch(() => setRows([]));
   useEffect(() => { load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, [project.id]);
@@ -130,9 +153,17 @@ export function SubmittalsPage({ project, initialFilter, onOpenRun, onNew }: { p
     && (!ql || `${s.number} ${s.title} ${s.spec_title} ${s.subcontractor}`.toLowerCase().includes(ql)));
   const groups = useMemo(() => {
     const g: Record<string, Submittal[]> = {};
-    shown.forEach((s) => { (g[s.division] ||= []).push(s); });
-    return Object.entries(g).sort(([a], [b]) => a.localeCompare(b));
-  }, [shown]);
+    const cmp: Record<string, (a: Submittal, b: Submittal) => number> = {
+      number: (a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }),
+      updated: (a, b) => (b.updated_at || 0) - (a.updated_at || 0),
+      created: (a, b) => (b.created_at || 0) - (a.created_at || 0),
+      title: (a, b) => (a.title || a.spec_title).localeCompare(b.title || b.spec_title),
+      sub: (a, b) => (a.subcontractor || "~").localeCompare(b.subcontractor || "~"),
+      status: (a, b) => a.status.localeCompare(b.status),
+    };
+    [...shown].sort(cmp[sort] || cmp.number).forEach((s) => { (g[s.division] ||= []).push(s); });
+    return Object.entries(g).sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }));
+  }, [shown, sort]);
   const divs = Array.from(new Set((rows || []).map((s) => s.division))).sort();
   const subsList = Array.from(new Set((rows || []).map((s) => s.subcontractor).filter(Boolean))).sort();
 
@@ -144,6 +175,7 @@ export function SubmittalsPage({ project, initialFilter, onOpenRun, onNew }: { p
         <select className="input input-sm" value={div} onChange={(e) => setDiv(e.target.value)} aria-label="Division"><option value="">All divisions</option>{divs.map((d) => <option key={d} value={d}>{d} {DIVISION_NAMES[d] || ""}</option>)}</select>
         <select className="input input-sm" value={sub} onChange={(e) => setSub(e.target.value)} aria-label="Subcontractor"><option value="">All subcontractors</option>{subsList.map((s) => <option key={s}>{s}</option>)}</select>
         <select className="input input-sm" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status"><option value="">Any status</option>{Object.entries(STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select>
+        <SortSelect value={sort} onChange={setSort} options={[["number", "Submittal number"], ["updated", "Last updated"], ["created", "Date created"], ["title", "Title"], ["sub", "Subcontractor"], ["status", "Status"]]} />
       </div>
       {rows && !rows.length && <div className="panel empty">No submittals yet. Each review you run is logged here by division.</div>}
       {groups.map(([d, list]) => {

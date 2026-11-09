@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { api, Division, DIVISION_NAMES, fmtBytes, fmtTime, LibraryFile, Project, Sub, TreeNode } from "../api";
+import { api, Division, DIVISION_CODES, DIVISION_NAMES, fmtBytes, fmtTime, LibraryFile, Project, Sub, TreeNode } from "../api";
 import { entriesToFiles } from "../components/DropZone";
 import { CoverMapper } from "../components/CoverMapper";
+import { PageViewer } from "../components/PageViewer";
 import { Badge, Button, Field, Icon, Modal, useToast } from "../components/ui";
+import { SortSelect } from "../components/Pickers";
 
 export type LibTab = "info" | "example" | "div01" | "cover" | "divisions" | "catalog";
 const INFO_TYPES = [
@@ -13,7 +15,25 @@ const GROUPS: { kind: string; label: string }[] = [
   { kind: "spec", label: "Specifications" }, { kind: "drawing", label: "Drawings" }, { kind: "amendment", label: "Amendments" },
   { kind: "document", label: "Other documents" }, { kind: "auto", label: "Type to be detected" },
 ];
-const DIV_CODES = Object.keys(DIVISION_NAMES);
+const DIV_CODES = DIVISION_CODES;
+const STATUS_ORDER: Record<string, number> = { processing: 0, queued: 1, error: 2, uploaded: 3, ready: 4, stored: 5 };
+export const FILE_SORTS: [string, string][] = [["newest", "Newest first"], ["oldest", "Oldest first"], ["name", "Name (A-Z)"], ["name_desc", "Name (Z-A)"],
+  ["pages", "Most pages"], ["status", "Status"], ["division", "Division"]];
+export function sortFiles(fs: LibraryFile[], by: string): LibraryFile[] {
+  const n = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+  const c: Record<string, (a: LibraryFile, b: LibraryFile) => number> = {
+    newest: (a, b) => b.uploaded_at - a.uploaded_at, oldest: (a, b) => a.uploaded_at - b.uploaded_at,
+    name: (a, b) => n(a.filename, b.filename), name_desc: (a, b) => n(b.filename, a.filename), pages: (a, b) => b.pages - a.pages,
+    status: (a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9) || n(a.filename, b.filename),
+    division: (a, b) => n(a.division || "99", b.division || "99") || n(a.filename, b.filename),
+  };
+  return [...fs].sort(c[by] || c.name);
+}
+const sortKey = (k: string) => `asm.sort.${k}`;
+function useStoredSort(key: string, init: string): [string, (v: string) => void] {
+  const [v, setV] = useState<string>(() => { try { return localStorage.getItem(sortKey(key)) || init; } catch { return init; } });
+  return [v, (x: string) => { setV(x); try { localStorage.setItem(sortKey(key), x); } catch { /* ignore */ } }];
+}
 
 function UploadBox({ onFiles, busy, children, label }: { onFiles: (f: File[]) => void; busy?: boolean; children?: React.ReactNode; label: string }) {
   const [over, setOver] = useState(false);
@@ -73,7 +93,7 @@ export function Library({ project, files, tree, defaults, pending, onChanged, ta
       {tab === "cover" && <SimpleTab project={project} kind="cover" files={files.filter((f) => f.kind === "cover")} defaults={defaults} onChanged={onChanged}
         intro="Your company's cover or transmittal page. Its form fields and text boxes are filled in by fixed rules from the submittal details, and it becomes page 1 of the package." />}
       {tab === "divisions" && <DivisionsTab project={project} />}
-      {tab === "catalog" && <CatalogTab project={project} tree={tree} />}
+      {tab === "catalog" && <CatalogTab project={project} tree={tree} files={files} />}
     </div>
   );
 }
@@ -91,6 +111,12 @@ function InfoTab({ project, files, pending, onChanged }: { project: Project; fil
   const [useAi, setUseAi] = useState(true);
   const [bulkKind, setBulkKind] = useState("spec");
   const [bulkDiv, setBulkDiv] = useState("");
+  const [sort, setSort] = useStoredSort("info", "name");
+  const working = files.filter((f) => f.status === "queued" || f.status === "processing").length;
+  const stop = async (ids: string[] = []) => {
+    try { const r = await api.cancelProcessing(project.id, ids); toast(r.cancelled ? `Stopped ${r.cancelled} file${r.cancelled === 1 ? "" : "s"}. They're back to Not processed.` : "Nothing was processing", "ok"); onChanged(); }
+    catch (e: any) { toast(e.message, "bad"); }
+  };
 
   const upload = async (fs: File[]) => {
     setBusy(true);
@@ -117,7 +143,7 @@ function InfoTab({ project, files, pending, onChanged }: { project: Project; fil
     catch (e: any) { toast(e.message, "bad"); }
   };
   const ql = q.trim().toLowerCase();
-  const shown = files.filter((f) => !ql || f.filename.toLowerCase().includes(ql));
+  const shown = sortFiles(files.filter((f) => !ql || f.filename.toLowerCase().includes(ql)), sort);
   const toggle = (id: string) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
   return (
@@ -134,19 +160,24 @@ function InfoTab({ project, files, pending, onChanged }: { project: Project; fil
         <p className="muted small">Uploading only stores the files. Nothing is read or charged until you press Process.</p>
       </section>
 
-      <section className={`processbar ${pending.files ? "has" : ""}`}>
+      <section className={`processbar ${pending.files || working ? "has" : ""}`}>
         <div>
-          <b>{pending.files ? `${pending.files} file${pending.files > 1 ? "s" : ""} waiting to be processed` : "Everything is processed"}</b>
+          <b>{working ? `Processing ${working} file${working > 1 ? "s" : ""}` : pending.files ? `${pending.files} file${pending.files > 1 ? "s" : ""} waiting to be processed` : "Everything is processed"}</b>
+          {working > 0 && pending.files > 0 && <span className="muted small"> {pending.files} more waiting</span>}
           {pending.files > 0 && <span className="muted small"> {pending.pages.toLocaleString()} pages</span>}
           <label className="toggle small"><input type="checkbox" checked={useAi} onChange={(e) => setUseAi(e.target.checked)} /><span className="toggle-ui" />
             Write a short summary of each section and sheet{pending.files > 0 && ` (about $${Math.max(0.01, pending.est_ai_cost).toFixed(2)})`}</label>
         </div>
-        <Button variant="primary" icon="play" disabled={!pending.files} onClick={() => process([])}>Process {pending.files || ""} file{pending.files === 1 ? "" : "s"}</Button>
+        <div className="row gap">
+          {working > 0 && <Button variant="ghost" icon="x" onClick={() => stop([])}>Stop processing</Button>}
+          <Button variant="primary" icon="play" disabled={!pending.files} onClick={() => process([])}>Process {pending.files || ""} file{pending.files === 1 ? "" : "s"}</Button>
+        </div>
       </section>
 
       <section className="panel">
         <div className="lib-toolbar">
           <div className="search"><Icon name="search" size={15} /><input placeholder="Filter files" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+          <SortSelect value={sort} onChange={setSort} options={FILE_SORTS} />
           <span className="muted small">{files.length} files</span>
         </div>
         {sel.size > 0 && (
@@ -157,6 +188,7 @@ function InfoTab({ project, files, pending, onChanged }: { project: Project; fil
             <span className="bulk-group"><select className="input input-sm" value={bulkDiv} onChange={(e) => setBulkDiv(e.target.value)}><option value="">No division</option>{DIV_CODES.map((c) => <option key={c} value={c}>{c} {DIVISION_NAMES[c]}</option>)}</select>
               <Button size="sm" onClick={() => bulk("set_division", bulkDiv)}>Set division</Button></span>
             <Button size="sm" icon="play" onClick={() => process(Array.from(sel))}>Process</Button>
+            {files.some((f) => sel.has(f.id) && (f.status === "queued" || f.status === "processing")) && <Button size="sm" icon="x" onClick={() => stop(Array.from(sel))}>Stop processing</Button>}
             <Button size="sm" onClick={() => bulk("reset")}>Mark unprocessed</Button>
             <Button size="sm" variant="danger" icon="trash" onClick={() => bulk("delete")}>Delete</Button>
             <button className="link-btn small" onClick={() => setSel(new Set())}>Clear</button>
@@ -186,7 +218,8 @@ function InfoTab({ project, files, pending, onChanged }: { project: Project; fil
                         <td><div className="mono small">{f.filename}</div><div className="muted tiny">{f.pages} pages, {fmtBytes(f.size)}, uploaded {fmtTime(f.uploaded_at)}</div>
                           {f.status === "error" && <div className="t-bad tiny">{f.error}</div>}</td>
                         <td className="nowrap small">{f.division ? `Div ${f.division}` : ""}</td>
-                        <td className="nowrap">{statusBadge(f)}</td>
+                        <td className="nowrap">{statusBadge(f)}
+                          {(f.status === "queued" || f.status === "processing") && <button className="icon-btn stop-btn" title="Stop processing this file" aria-label={`Stop processing ${f.filename}`} onClick={() => stop([f.id])}><Icon name="x" size={14} /></button>}</td>
                         <td className="w-act">
                           <select className="input input-sm" value={f.kind} aria-label="Type" onChange={(e) => api.patchFile(f.id, { kind: e.target.value }).then(onChanged)}>
                             {f.kind === "auto" && <option value="auto">Detect</option>}{INFO_TYPES.slice(1).map((t) => <option key={t.value} value={t.value}>{t.label.split(" (")[0]}</option>)}
@@ -213,10 +246,15 @@ function SimpleTab({ project, kind, files, defaults, onChanged, intro }: { proje
   const [busy, setBusy] = useState(false);
   const [mapping, setMapping] = useState<LibraryFile | null>(null);
   const defKey = kind === "example" ? "examples" : kind;
+  const [sort, setSort] = useStoredSort(kind, "newest");
   const defList: string[] = kind === "cover" ? (defaults?.cover ? [defaults.cover] : []) : (defaults?.[defKey] || []);
   const upload = async (fs: File[]) => {
     setBusy(true);
-    try { const r = await api.uploadLibrary(project.id, fs, kind); r.errors.forEach((e) => toast(`${e.filename}: ${e.error}`, "bad")); onChanged();
+    try { const r = await api.uploadLibrary(project.id, fs, kind); r.errors.forEach((e) => toast(`${e.filename}: ${e.error}`, "bad"));
+      const dups = r.files.filter((f) => f.duplicate), added = r.files.length - dups.length;
+      if (added) toast(`${added} file${added === 1 ? "" : "s"} added`, "ok");
+      if (dups.length) toast(`${dups.map((d) => d.filename).join(", ")} ${dups.length === 1 ? "is" : "are"} already in this list`, "info");
+      onChanged();
       if (kind === "cover" && r.files[0] && !r.files[0].duplicate) setMapping(r.files[0]); }
     catch (e: any) { toast(e.message, "bad"); } finally { setBusy(false); }
   };
@@ -231,10 +269,11 @@ function SimpleTab({ project, kind, files, defaults, onChanged, intro }: { proje
         <UploadBox onFiles={upload} busy={busy} label={kind === "cover" ? "Drop your cover page PDF" : "Drop PDFs"} />
       </section>
       <section className="panel">
+        {files.length > 1 && <div className="lib-toolbar"><span className="grow" /><SortSelect value={sort} onChange={setSort} options={FILE_SORTS.filter(([k]) => !["status", "division"].includes(k))} /></div>}
         <table className="matrix compact">
           <thead><tr><th>File</th><th>{kind === "cover" ? "Fillable boxes" : "Pages"}</th><th>Use by default</th><th /></tr></thead>
           <tbody>
-            {files.map((f) => (
+            {sortFiles(files, sort).map((f) => (
               <tr key={f.id}>
                 <td><a className="mono small" href={`/api/library/${f.id}/file.pdf`} target="_blank" rel="noreferrer">{f.filename}</a><div className="muted tiny">{fmtTime(f.uploaded_at)}</div></td>
                 <td className="small">{kind === "cover" ? `${(f.meta?.fields || []).length} found` : f.pages}</td>
@@ -335,44 +374,114 @@ function DivisionsTab({ project }: { project: Project }) {
 
 // ===================================================================== catalog browser
 
-function CatalogTab({ project, tree }: { project: Project; tree: TreeNode[] }) {
+const CAT_KINDS: [string, string][] = [["", "All"], ["spec_section", "Specifications"], ["drawing_sheet", "Drawings"], ["amendment", "Amendments"], ["document", "Documents"]];
+const CAT_SORTS: [string, string][] = [["number", "Number"], ["title", "Title"], ["pages", "Most pages"], ["newest", "Newest upload"], ["oldest", "Oldest upload"], ["file", "Source file"]];
+const discipline = (n: string) => (n.match(/^[A-Z]+/i)?.[0] || "").toUpperCase();
+
+function CatalogTab({ project, tree, files }: { project: Project; tree: TreeNode[]; files: LibraryFile[] }) {
   const [sel, setSel] = useState<string | null>(null);
   const [item, setItem] = useState<any>(null);
   const [q, setQ] = useState("");
-  useEffect(() => { if (sel) api.catalogItem(project.id, sel).then(setItem).catch(() => setItem(null)); }, [sel]);
+  const [kind, setKind] = useState("");
+  const [group, setGroup] = useState("");
+  const [amendedOnly, setAmendedOnly] = useState(false);
+  const [showText, setShowText] = useState(false);
+  const [sort, setSort] = useStoredSort("catalog", "number");
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { setItem(null); setShowText(false); if (sel) api.catalogItem(project.id, sel).then(setItem).catch(() => setItem(null)); }, [sel]);
+  useEffect(() => { setGroup(""); }, [kind]);
+  const fileById = useMemo(() => Object.fromEntries(files.map((f) => [f.id, f])), [files]);
   const leaves = useMemo(() => {
     const out: TreeNode[] = [];
     const walk = (ns: TreeNode[]) => ns.forEach((n) => ["spec_section", "drawing_sheet", "amendment", "document"].includes(n.kind) ? out.push(n) : walk(n.children || []));
     walk(tree);
     return out;
   }, [tree]);
-  const ql = q.toLowerCase();
-  const shown = leaves.filter((l) => !ql || l.label.toLowerCase().includes(ql));
+  const counts = useMemo(() => leaves.reduce<Record<string, number>>((c, l) => { c[l.kind] = (c[l.kind] || 0) + 1; return c; }, {}), [leaves]);
+  const groups = useMemo(() => {
+    if (kind === "spec_section") return Array.from(new Set(leaves.filter((l) => l.kind === kind).map((l) => (l.number || "").slice(0, 2)))).filter(Boolean).sort();
+    if (kind === "drawing_sheet") return Array.from(new Set(leaves.filter((l) => l.kind === kind).map((l) => discipline(l.number || "")))).filter(Boolean).sort();
+    return [];
+  }, [leaves, kind]);
+  const ql = q.trim().toLowerCase();
+  const shown = useMemo(() => {
+    const n = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+    const up = (l: TreeNode) => fileById[l.file_id || ""]?.uploaded_at || 0;
+    const cmp: Record<string, (a: TreeNode, b: TreeNode) => number> = {
+      number: (a, b) => n(a.number || a.label, b.number || b.label), title: (a, b) => n(a.title || a.label, b.title || b.label),
+      pages: (a, b) => (b.pages || 0) - (a.pages || 0), newest: (a, b) => up(b) - up(a) || n(a.number || "", b.number || ""),
+      oldest: (a, b) => up(a) - up(b) || n(a.number || "", b.number || ""),
+      file: (a, b) => n(fileById[a.file_id || ""]?.filename || "", fileById[b.file_id || ""]?.filename || "") || (a.page_start || 0) - (b.page_start || 0),
+    };
+    return leaves.filter((l) => (!kind || l.kind === kind)
+      && (!group || (kind === "spec_section" ? (l.number || "").startsWith(group) : discipline(l.number || "") === group))
+      && (!amendedOnly || !!l.amended_by?.length)
+      && (!ql || `${l.number || ""} ${l.title || ""} ${l.label}`.toLowerCase().includes(ql))).sort(cmp[sort] || cmp.number);
+  }, [leaves, kind, group, amendedOnly, ql, sort, fileById]);
+  const node = sel ? leaves.find((l) => l.id === sel) : null;
+  useEffect(() => { if (sel) listRef.current?.querySelector(".cat-row.on")?.scrollIntoView({ block: "nearest" }); }, [sel]);
+  const kindLabel: Record<string, string> = { spec_section: "Spec", drawing_sheet: "Sheet", amendment: "Amendment", document: "Document" };
+
   return (
-    <div className="two-col">
-      <section className="panel">
-        <div className="search boxed"><Icon name="search" size={15} /><input placeholder="Filter the catalog" value={q} onChange={(e) => setQ(e.target.value)} /></div>
-        <div className="cat-list">
-          {shown.map((n) => (
-            <button key={n.id} className={`cat-row ${sel === n.id ? "on" : ""}`} onClick={() => setSel(n.id)}>
-              <span className="mono-num">{n.number || ""}</span><span className="cat-t">{n.title || n.label}</span>
-              {!!n.amended_by?.length && <Badge tone="warn">amended</Badge>}<span className="muted tiny">{n.pages} pp</span>
-            </button>
-          ))}
-          {!shown.length && <p className="empty">Nothing catalogued yet. Process your project information first.</p>}
+    <div className={`cat-layout ${node ? "has-sel" : ""}`}>
+      <section className="panel cat-browser">
+        <div className="cat-filters">
+          <div className="pills" role="radiogroup" aria-label="Show">
+            {CAT_KINDS.map(([k, l]) => (
+              <button key={k} role="radio" aria-checked={kind === k} className={`pill ${kind === k ? "on" : ""}`} onClick={() => setKind(k)}
+                disabled={!!k && !counts[k]}>{l}<span className="pill-n">{k ? counts[k] || 0 : leaves.length}</span></button>
+            ))}
+          </div>
+          <div className="filterbar">
+            <div className="search"><Icon name="search" size={15} /><input placeholder="Number, title or keyword" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Filter the catalog" />
+              {q && <button className="icon-btn" aria-label="Clear" onClick={() => setQ("")}><Icon name="x" size={14} /></button>}</div>
+            {groups.length > 1 && (
+              <select className="input input-sm" value={group} onChange={(e) => setGroup(e.target.value)} aria-label={kind === "spec_section" ? "Division" : "Discipline"}>
+                <option value="">{kind === "spec_section" ? "All divisions" : "All disciplines"}</option>
+                {groups.map((g) => <option key={g} value={g}>{kind === "spec_section" ? `${g} ${DIVISION_NAMES[g] || ""}` : g}</option>)}
+              </select>
+            )}
+            <label className="check small"><input type="checkbox" checked={amendedOnly} onChange={(e) => setAmendedOnly(e.target.checked)} /> Amended only</label>
+            <SortSelect value={sort} onChange={setSort} options={CAT_SORTS} />
+          </div>
+          <p className="muted tiny">{shown.length} of {leaves.length} items</p>
+        </div>
+        <div className="cat-list" ref={listRef}>
+          {shown.map((n) => {
+            const f = fileById[n.file_id || ""];
+            return (
+              <button key={n.id} className={`cat-row ${sel === n.id ? "on" : ""}`} onClick={() => setSel(sel === n.id ? null : n.id)} aria-pressed={sel === n.id}>
+                <span className="mono-num">{n.number || ""}</span>
+                <span className="cat-t">{n.title || n.label}{!node && f && <span className="muted tiny cat-src">{f.filename}{n.page_start ? `, p.${n.page_start}` : ""}</span>}</span>
+                {!kind && <span className="cat-kind">{kindLabel[n.kind]}</span>}
+                {!!n.amended_by?.length && <Badge tone="warn">amended</Badge>}<span className="muted tiny cat-pp">{n.pages} pp</span>
+              </button>
+            );
+          })}
+          {!shown.length && <p className="empty">{leaves.length ? "Nothing matches these filters." : "Nothing catalogued yet. Process your project information first."}</p>}
         </div>
       </section>
-      <section className="panel">
-        {item ? (
-          <div className="cat-detail">
-            <h3 className="panel-title"><span><span className="mono">{item.number}</span> {item.title}</span></h3>
-            {item.summary && <p className="small">{item.summary}</p>}
-            {!!item.keywords?.length && <div className="kw">{item.keywords.slice(0, 16).map((k: string) => <span key={k} className="kwc">{k}</span>)}</div>}
-            {!!item.amended_by?.length && <p className="t-warn small">Amended by {item.amended_by.join(", ").replace(/AM:/g, "")}</p>}
-            <pre className="txt small-pre">{item.text}</pre>
-          </div>
-        ) : <p className="empty">Select an item to see what the reviewer reads.</p>}
-      </section>
+      {node && (
+        <section className="panel panel-flush cat-viewer">
+          {node.file_id && node.page_start ? (
+            <PageViewer fileId={node.file_id} start={node.page_start} end={node.page_end || node.page_start}
+              title={<><span className="mono">{node.number}</span> {node.title || node.label}</>}
+              sub={fileById[node.file_id]?.filename ? `${fileById[node.file_id].filename}, ${(node.page_end || node.page_start) > node.page_start ? `pages ${node.page_start}-${node.page_end}` : `page ${node.page_start}`}` : undefined}
+              pdfUrl={`/api/projects/${project.id}/catalog/item.pdf?id=${encodeURIComponent(node.id)}`}
+              fullUrl={`/api/library/${node.file_id}/file.pdf#page=${node.page_start}`} onClose={() => setSel(null)}>
+              {item && (
+                <>
+                  {item.summary && <p className="small">{item.summary}</p>}
+                  {!!item.keywords?.length && <div className="kw">{item.keywords.slice(0, 14).map((k: string) => <span key={k} className="kwc">{k}</span>)}</div>}
+                  {!!item.amended_by?.length && <p className="t-warn small">Amended by {item.amended_by.join(", ").replace(/AM:/g, "")}</p>}
+                  {item.text && <button className="link-btn small" onClick={() => setShowText(!showText)}>{showText ? "Hide the extracted text" : "Show the extracted text the reviewer reads"}</button>}
+                  {showText && <pre className="txt small-pre">{item.text}</pre>}
+                </>
+              )}
+            </PageViewer>
+          ) : <p className="empty">This item has no pages to show.</p>}
+        </section>
+      )}
     </div>
   );
 }

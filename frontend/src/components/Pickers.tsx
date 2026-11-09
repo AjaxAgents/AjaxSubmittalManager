@@ -108,3 +108,64 @@ export function FilePicker({ options, selected, onChange, multiple, placeholder,
     </div>
   );
 }
+
+/** Topbar project switcher: a button that opens a type-to-filter list of projects. */
+export function ProjectSwitcher({ projects, current, onPick }: {
+  projects: { id: string; name: string; number?: string; ae_firm?: string }[]; current: string | null; onPick: (id: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [hi, setHi] = useState(0);
+  const ref = useRef<HTMLDivElement>(null);
+  useOutside(ref, open, () => setOpen(false));
+  useEffect(() => { if (open) { setQ(""); setHi(0); } }, [open]);
+  const cur = projects.find((p) => p.id === current);
+  const ql = q.trim().toLowerCase();
+  const list = ql ? projects.filter((p) => `${p.number || ""} ${p.name} ${p.ae_firm || ""}`.toLowerCase().includes(ql)) : projects;
+  const rows: (null | typeof projects[number])[] = ql ? list : [null, ...list];
+  const pick = (id: string | null) => { onPick(id); setOpen(false); };
+  return (
+    <div className="pswitch" ref={ref}>
+      <button type="button" className="pswitch-btn" onClick={() => setOpen(!open)} aria-expanded={open} aria-haspopup="listbox" aria-label="Switch project">
+        <Icon name="building" size={16} />
+        <span className="pswitch-cur">{cur ? <>{cur.number && <span className="pswitch-num">{cur.number}</span>}{cur.name}</> : "All projects"}</span>
+        <Icon name="down" size={14} />
+      </button>
+      {open && (
+        <div className="pswitch-pop">
+          <div className="pswitch-search">
+            <Icon name="search" size={15} />
+            <input autoFocus value={q} placeholder="Type a project name or number" aria-label="Find a project" role="combobox" aria-expanded="true"
+              onChange={(e) => { setQ(e.target.value); setHi(0); }}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown") { setHi((h) => Math.min(h + 1, rows.length - 1)); e.preventDefault(); }
+                if (e.key === "ArrowUp") { setHi((h) => Math.max(h - 1, 0)); e.preventDefault(); }
+                if (e.key === "Enter" && rows[hi] !== undefined) { pick(rows[hi]?.id ?? null); e.preventDefault(); }
+              }} />
+          </div>
+          <div className="pswitch-list" role="listbox">
+            {rows.map((p, i) => (
+              <button key={p?.id || "all"} type="button" role="option" aria-selected={i === hi}
+                className={`pswitch-opt ${i === hi ? "hi" : ""} ${(p?.id ?? null) === current ? "cur" : ""}`}
+                onMouseEnter={() => setHi(i)} onClick={() => pick(p?.id ?? null)}>
+                {p ? <><span className="pswitch-num mono">{p.number || "-"}</span><span className="pswitch-name">{p.name}</span></>
+                  : <span className="pswitch-name muted">All projects</span>}
+              </button>
+            ))}
+            {ql && !list.length && <div className="combo-empty">No project matches "{q}"</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function SortSelect({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: [string, string][] }) {
+  return (
+    <label className="sort-sel"><span>Sort by</span>
+      <select className="input input-sm" value={value} onChange={(e) => onChange(e.target.value)}>
+        {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+      </select>
+    </label>
+  );
+}

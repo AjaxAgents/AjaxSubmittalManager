@@ -39,21 +39,24 @@ export function Login({ hasUsers, onSignedIn, version }: { hasUsers: boolean; on
         <p className="login-line">Review submittals against the project's own specs and drawings, and send a marked-up package that's ready for the architect.</p>
         <span className="login-ver">Version {version}</span>
       </div>
-      <form className="login-card" onSubmit={submit}>
-        <h1>{mode === "in" ? "Sign in" : hasUsers ? "Create an account" : "Create your account"}</h1>
-        {mode === "up" && !hasUsers && <p className="muted small">This is the first account on this computer. Projects already here will move into it.</p>}
-        {mode === "up" && <Field label="Your name"><input className="input" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" placeholder="Jack Lund" /></Field>}
-        <Field label="Username"><input className="input" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus required /></Field>
-        <Field label="Password"><input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={mode === "in" ? "current-password" : "new-password"} required minLength={mode === "up" ? 8 : undefined} /></Field>
-        {mode === "up" && <Field label="Confirm password" hint="At least 8 characters"><input className="input" type="password" value={password2} onChange={(e) => setPassword2(e.target.value)} autoComplete="new-password" required /></Field>}
-        {mode === "in" && <label className="check"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Keep me signed in for 2 weeks</label>}
-        {err && <p className="form-err" role="alert">{err}</p>}
-        <Button variant="primary" size="lg" loading={busy} type="submit">{mode === "in" ? "Sign in" : "Create account"}</Button>
-        <p className="login-switch">
-          {mode === "in" ? <>New here? <button type="button" className="link-btn" onClick={() => setMode("up")}>Create an account</button></>
-            : hasUsers ? <>Already have an account? <button type="button" className="link-btn" onClick={() => setMode("in")}>Sign in</button></> : null}
-        </p>
-      </form>
+      <div className="login-main">
+        <form className="login-card" onSubmit={submit}>
+          <div className="login-tabs" role="tablist" aria-label="Sign in or sign up">
+            <button type="button" role="tab" aria-selected={mode === "in"} className={mode === "in" ? "on" : ""} disabled={!hasUsers}
+              title={hasUsers ? undefined : "No accounts yet on this computer - create the first one"} onClick={() => { setMode("in"); setErr(""); }}>Log in</button>
+            <button type="button" role="tab" aria-selected={mode === "up"} className={mode === "up" ? "on" : ""} onClick={() => { setMode("up"); setErr(""); }}>Sign up</button>
+          </div>
+          <h1>{mode === "in" ? "Welcome back" : hasUsers ? "Create an account" : "Create your account"}</h1>
+          {mode === "up" && !hasUsers && <p className="muted small">This is the first account on this computer. Projects already here will move into it.</p>}
+          {mode === "up" && <Field label="Your name"><input className="input" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" placeholder="Jack Lund" /></Field>}
+          <Field label="Username"><input className="input" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus required /></Field>
+          <Field label="Password"><input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete={mode === "in" ? "current-password" : "new-password"} required minLength={mode === "up" ? 8 : undefined} /></Field>
+          {mode === "up" && <Field label="Confirm password" hint="At least 8 characters"><input className="input" type="password" value={password2} onChange={(e) => setPassword2(e.target.value)} autoComplete="new-password" required /></Field>}
+          {mode === "in" && <label className="check"><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> Keep me logged in for 2 weeks</label>}
+          {err && <p className="form-err" role="alert">{err}</p>}
+          <Button variant="primary" size="lg" loading={busy} type="submit">{mode === "in" ? "Log in" : "Create account"}</Button>
+        </form>
+      </div>
     </div>
   );
 }

@@ -29,7 +29,7 @@ from .. import __version__, auth, db, pipeline
 from ..config import (FRONTEND_DIST, data_dir, mock_mode, models_cfg, outputs_dir, reload_all, save_overrides,
                       settings_cfg)
 from ..library import catalog as cat
-from ..library.ingest import DIVISIONS, ingest_file, norm_section, relink_amendments
+from ..library.ingest import DIVISIONS, ingest_file, norm_section, relink_amendments, request_cancel, CANCELLED
 from ..outputs import naming
 from ..pdf import cover_template as ctpl
 from ..pdf.util import inspect_pdf, ocr_available, render_png, sha256_file
@@ -521,7 +521,8 @@ async def library_upload(pid: str, files: list[UploadFile] = File(...), kind: st
             errors.append({"filename": up.filename, "error": info["error"]})
             continue
         sha = sha256_file(path)
-        dup = db.find_library_file_by_hash(pid, sha)
+        # duplicates are per section of the library: the same 01 33 00 can be both a spec and the Division 01 procedures
+        dup = db.find_library_file_by_hash(pid, sha, [k for k, cat in CATEGORY.items() if cat == CATEGORY[kind]])
         if dup:
             path.unlink(missing_ok=True)
             out.append({**_file_out(dup), "duplicate": True})
@@ -560,10 +561,35 @@ def library_process(pid: str, body: ProcessIn) -> dict:
     for f in files:
         if CATEGORY.get(f["kind"]) != "info" or f["status"] in ("queued", "processing"):
             continue
+        CANCELLED.discard(f["id"])
         db.update_library_file(f["id"], status="queued", progress=0, error="", notes="queued")
         _queue_ingest(pid, f["id"], body.use_ai)
         n += 1
     return {"queued": n}
+
+
+class CancelIn(BaseModel):
+    file_ids: list[str] = []      # empty = everything queued or processing
+
+
+def _cancel_file(f: dict) -> bool:
+    if f["status"] == "queued":
+        request_cancel(f["id"])  # in case the worker is picking it up right now
+        db.update_library_file(f["id"], status="uploaded", progress=0, notes="")
+        return True
+    if f["status"] == "processing":
+        request_cancel(f["id"])
+        db.update_library_file(f["id"], notes="Stopping")
+        return True
+    return False
+
+
+@app.post("/api/projects/{pid}/library/cancel")
+def library_cancel(pid: str, body: CancelIn) -> dict:
+    _need_project(pid)
+    want = set(body.file_ids)
+    n = sum(_cancel_file(f) for f in db.list_library_files(pid) if not want or f["id"] in want)
+    return {"cancelled": n}
 
 
 class BulkIn(BaseModel):
@@ -581,6 +607,7 @@ def library_bulk(pid: str, body: BulkIn) -> dict:
         if not f or f["project_id"] != pid:
             continue
         if body.action == "delete":
+            _cancel_file(f)
             db.delete_library_file(fid)
         elif body.action == "set_kind":
             if body.value not in LIB_KINDS:
@@ -634,18 +661,19 @@ def library_patch(fid: str, body: FilePatch) -> dict:
 @app.delete("/api/library/{fid}")
 def library_delete(fid: str) -> dict:
     f = _need_file(fid)
+    _cancel_file(f)
     db.delete_library_file(fid)
     relink_amendments(f["project_id"])
     return {"ok": True}
 
 
 @app.get("/api/library/{fid}/pages/{n}.png")
-def library_page(fid: str, n: int, dpi: int = 50) -> Response:
+def library_page(fid: str, n: int, dpi: int = 50, px: int = 1600) -> Response:
     f = _need_file(fid)
     with pymupdf.open(f["path"]) as d:
         if not 1 <= n <= d.page_count:
             raise HTTPException(404)
-        png = render_png(d, n - 1, dpi=min(dpi, 150), max_px=1600)
+        png = render_png(d, n - 1, dpi=min(dpi, 150), max_px=max(400, min(px, 3600)))
     return Response(png, media_type="image/png", headers={"Cache-Control": "max-age=3600"})
 
 
@@ -753,6 +781,26 @@ def catalog_item(pid: str, id: str) -> dict:
         raise HTTPException(404)
     it["text"] = (it.get("text") or "")[:20000]
     return it
+
+
+@app.get("/api/projects/{pid}/catalog/item.pdf")
+def catalog_item_pdf(pid: str, id: str) -> Response:
+    """Just this item's pages (a spec section, a sheet, an addendum) as a PDF, for reading in the browser."""
+    _need_project(pid)
+    it = db.get_catalog_item(pid, id)
+    if not it or not it.get("file_id"):
+        raise HTTPException(404)
+    f = _need_file(it["file_id"])
+    with pymupdf.open(f["path"]) as src:
+        a = max(1, int(it.get("page_start") or 1))
+        b = min(src.page_count, int(it.get("page_end") or a))
+        out = pymupdf.open()
+        out.insert_pdf(src, from_page=a - 1, to_page=max(a, b) - 1)
+        data = out.tobytes(garbage=3, deflate=True)
+        out.close()
+    name = re.sub(r"[^\w .-]+", "_", f"{it.get('number') or ''} {it.get('title') or ''}".strip() or "item")[:80]
+    return Response(data, media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="{name}.pdf"', "Cache-Control": "max-age=600"})
 
 
 # ----------------------------------------------------------------------------- submittal uploads

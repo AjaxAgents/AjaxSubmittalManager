@@ -95,11 +95,32 @@ def test_library_workflow_and_review(data, demo, tmp_path):
         cv = c.post(f"/api/projects/{pid}/library", data={"kind": "cover"},
                     files=[("files", ("cover.pdf", open(tmp_path / "cover.pdf", "rb"), "application/pdf"))]).json()["files"][0]
         assert ex["status"] == "stored" and cv["kind"] == "cover"
+        # the same PDF already in Project information can still be added as Division 01 (dedupe is per library section)
+        d1b = c.post(f"/api/projects/{pid}/library", data={"kind": "div01"}, files=[("files", (
+            "Addendum as div01.pdf", open(demo / "Addendum 01.pdf", "rb"), "application/pdf"))]).json()["files"][0]
+        assert not d1b.get("duplicate") and d1b["kind"] == "div01"
+        again = c.post(f"/api/projects/{pid}/library", data={"kind": "div01"}, files=[("files", (
+            "Addendum as div01.pdf", open(demo / "Addendum 01.pdf", "rb"), "application/pdf"))]).json()["files"][0]
+        assert again.get("duplicate")
+        c.delete(f"/api/library/{d1b['id']}")
         cov = c.get(f"/api/library/{cv['id']}/cover").json()
         mapping = cov["mapping"]
         assert mapping["w:Project Name"] == "ProjectName" and mapping["w:Submittal No"] == "SubmittalNo"
         assert any(v == "@template" for v in mapping.values())
         assert c.post(f"/api/library/{cv['id']}/cover/preview", json={"params": {}}).status_code == 200
+
+        # catalog item as its own PDF (just that section's pages)
+        tree = c.get(f"/api/projects/{pid}/catalog/tree").json()
+        def leaves(ns):
+            for n in ns:
+                if n["kind"] == "spec_section":
+                    yield n
+                yield from leaves(n.get("children") or [])
+        sec = next(leaves(tree))
+        r = c.get(f"/api/projects/{pid}/catalog/item.pdf", params={"id": sec["id"]})
+        assert r.status_code == 200 and r.content[:4] == b"%PDF"
+        import pymupdf
+        assert pymupdf.open(stream=r.content, filetype="pdf").page_count == sec["page_end"] - sec["page_start"] + 1
 
         # subcontractors + divisions
         sub = c.post(f"/api/projects/{pid}/subcontractors", json={"name": "Northside Door Supply", "divisions": ["08"]}).json()
@@ -139,3 +160,25 @@ def test_library_workflow_and_review(data, demo, tmp_path):
         assert any("08 71 00 Door Hardware" in t for t in texts)
         assert "Northside Door Supply" in p1.get_text()
         assert "{Subcontractor}" not in p1.get_text()
+
+
+def test_cancel_processing(data, demo):
+    from asm.api.app import app
+    from asm.library import ingest
+    with TestClient(app) as c:
+        c.post("/api/auth/register", json={"username": "jack", "password": "correct horse"})
+        pid = c.post("/api/projects", json={"name": "P"}).json()["id"]
+        f = c.post(f"/api/projects/{pid}/library", data={"kind": "spec"}, files=[("files", (
+            "PM.pdf", open(demo / "Project Manual - Riverside MOB.pdf", "rb"), "application/pdf"))]).json()["files"][0]
+        # queued -> back to uploaded
+        from asm import db
+        db.update_library_file(f["id"], status="queued")
+        assert c.post(f"/api/projects/{pid}/library/cancel", json={"file_ids": [f["id"]]}).json()["cancelled"] == 1
+        assert db.get_library_file(f["id"])["status"] == "uploaded"
+        # processing -> the ingest stops at its next step and leaves no catalog rows
+        ingest.request_cancel(f["id"])
+        assert ingest.ingest_file(pid, f["id"], use_ai=False) == {"cancelled": True}
+        row = db.get_library_file(f["id"])
+        assert row["status"] == "uploaded" and c.get(f"/api/projects/{pid}/library").json()["summary"]["sections"] == 0
+        # a normal run afterwards still works
+        assert ingest.ingest_file(pid, f["id"], use_ai=False)["kind"] == "spec"

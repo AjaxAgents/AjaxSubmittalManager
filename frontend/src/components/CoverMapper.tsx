@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { api, CoverField, LibraryFile } from "../api";
 import { Button, Icon, Modal, useToast } from "./ui";
 
@@ -12,9 +12,12 @@ export function CoverMapper({ file, onClose }: { file: LibraryFile; onClose: () 
   const [img, setImg] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [pageSize, setPageSize] = useState<number[]>([612, 792]);
+  const [active, setActive] = useState<string | null>(null);
+  const rowsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    api.cover(file.id).then((c) => { setFields(c.fields); setTokens(c.tokens); setMapping(c.mapping); setIncludeGen(c.include_generated); setErr(c.error); })
+    api.cover(file.id).then((c) => { setFields(c.fields); setTokens(c.tokens); setMapping(c.mapping); setIncludeGen(c.include_generated); setErr(c.error); if (c.page_size?.length === 2) setPageSize(c.page_size); })
       .catch((e) => setErr(e.message));
   }, [file.id]);
 
@@ -35,6 +38,17 @@ export function CoverMapper({ file, onClose }: { file: LibraryFile; onClose: () 
   };
 
   const val = (f: CoverField) => mapping[f.key] ?? "";
+  const pick = (key: string) => {
+    setActive(key);
+    const row = rowsRef.current?.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`);
+    row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    row?.querySelector<HTMLElement>("select")?.focus({ preventScroll: true });
+  };
+  const box = (f: CoverField): React.CSSProperties => {
+    const [w, h] = pageSize; const [x0, y0, x1, y1] = f.rect;
+    return { left: `${(x0 / w) * 100}%`, top: `${(y0 / h) * 100}%`, width: `${((x1 - x0) / w) * 100}%`, height: `${((y1 - y0) / h) * 100}%` };
+  };
+  const activeField = fields.find((f) => f.key === active);
   const kindOf = (v: string) => v.startsWith("text:") ? "@custom" : v;
 
   return (
@@ -43,17 +57,32 @@ export function CoverMapper({ file, onClose }: { file: LibraryFile; onClose: () 
         Also add the standard Ajax transmittal page after it</label>
         <Button variant="ghost" onClick={onClose}>Cancel</Button><Button variant="primary" loading={busy} onClick={save}>Save mapping</Button></>}>
       <div className="mapper">
-        <div className="mapper-preview">{img ? <img src={img} alt="Filled preview with sample values" /> : <span className="spinner spinner-brand" />}<p className="muted tiny">Preview with sample values</p></div>
-        <div className="mapper-fields">
+        <div className="mapper-preview">
+          {img ? (
+            <div className="mapper-sheet">
+              <img src={img} alt="Filled preview with sample values" />
+              {fields.filter((f) => f.page === 1 && f.rect?.length === 4).map((f) => (
+                <button key={f.key} type="button" className={`mapper-box ${active === f.key ? "on" : ""}`} style={box(f)}
+                  onClick={() => pick(f.key)} aria-label={`Select ${f.kind === "field" ? f.name : "text box"}`}
+                  title={f.kind === "field" ? f.name : f.current || "Text box"}>
+                  <span className="mapper-num">{fields.indexOf(f) + 1}</span>
+                </button>
+              ))}
+            </div>
+          ) : <span className="spinner spinner-brand" />}
+          <p className="muted tiny">{activeField && activeField.page !== 1 ? `This box is on page ${activeField.page}; the preview shows page 1.` : "Preview with sample values. Click a box to edit it."}</p>
+        </div>
+        <div className="mapper-fields" ref={rowsRef}>
           {err && <p className="t-bad small">{err}</p>}
           <p className="muted small">Each box is filled by a fixed rule. You can also type tokens such as <code>{"{ProjectName}"}</code> or <code>{"{SubmittalNo}"}</code> straight into the template's boxes or text, and they are replaced automatically.</p>
           {!fields.length && !err && (
             <p className="note-warn"><Icon name="alert" size={15} /> No fillable fields or text boxes were found. Add form fields or text boxes in Bluebeam (or type {"{Tokens}"} on the page), then upload the template again. Until then it is inserted as-is.</p>
           )}
-          {fields.map((f) => (
-            <div className="maprow" key={f.key}>
+          {fields.map((f, i) => (
+            <div className={`maprow ${active === f.key ? "on" : ""}`} key={f.key} data-key={f.key}
+              onMouseEnter={() => setActive(f.key)} onFocusCapture={() => setActive(f.key)} onClick={() => setActive(f.key)}>
               <div className="maprow-name">
-                <b>{f.kind === "field" ? f.name : (f.current ? `"${f.current.slice(0, 40)}"` : "Empty text box")}</b>
+                <b><span className="mapper-num">{i + 1}</span>{f.kind === "field" ? f.name : (f.current ? `"${f.current.slice(0, 40)}"` : "Empty text box")}</b>
                 <span className="muted tiny">{f.kind === "field" ? "Form field" : "Text box"}, page {f.page}</span>
               </div>
               <select className="input input-sm" value={kindOf(val(f))} onChange={(e) => setMapping({ ...mapping, [f.key]: e.target.value === "@custom" ? "text:" : e.target.value })}>
