@@ -17,7 +17,7 @@ export interface TreeNode {
 export interface ScopeItem { id: string; reason?: string; locked?: boolean; pages?: number[] | null }
 export interface Settings {
   api_key_set: boolean; api_key_hint: string; mock: boolean; stages: Record<string, string>; usd_cap: number;
-  scope_mode: string; page_budget: number; web_search: boolean; output_dir: string;
+  scope_mode: string; page_budget: number; web_search: boolean; output_dir: string; key_location?: string;
 }
 export interface Health { ok: boolean; version: string; api_key_set: boolean; mock: boolean; ocr: string; data_dir: string }
 export interface Job {

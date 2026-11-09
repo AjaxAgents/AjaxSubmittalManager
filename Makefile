@@ -1,6 +1,6 @@
 # Ajax Submittal Manager - developer commands
 PY ?= python3
-.PHONY: dev backend frontend ui test eval gate demo docker install
+.PHONY: dev backend frontend ui test eval gate demo docker install exe
 
 install:            ## install backend + frontend dependencies
 	$(PY) -m pip install -r backend/requirements-dev.txt
@@ -30,3 +30,7 @@ demo:               ## generate the fictional demo project -> data/demo
 
 docker:
 	docker compose up --build
+
+exe:                ## build dist/AjaxSubmittalManager.exe (run on Windows; CI does this on merge to main)
+	$(PY) -m pip install pyinstaller
+	pyinstaller packaging/AjaxSubmittalManager.spec --noconfirm

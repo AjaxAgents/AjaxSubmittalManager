@@ -1,9 +1,18 @@
-# Default output naming (spec V2 section 9). Division 01 rules or the
-# "mimic example naming" toggle override this per run.
+# Default output naming (spec V2 section 9). Precedence per run: reviewer's pattern box >
+# "mimic example naming" toggle > Division 01 rule found by the Planner > this default.
 #
-# Tokens: {SpecSection} {Seq} {Seq:03d} {Rev} {SpecTitle} {Type} {Title}
+# Tokens: {SpecSection} {Seq} {Seq:02d} {Rev} {SpecTitle} {Type} {TypeAbbr} {Title}
 #         {ProjectNumber} {ProjectName} {Date} {Contractor}
-pattern: "{SpecSection}-{Seq:03d}-{Rev} {SpecTitle} - {Type}"
+# Ajax default -> "08 71 00 - 01.0 Door Hardware - PD"
+pattern: "{SpecSection} - {Seq:02d}.{Rev} {SpecTitle} - {TypeAbbr}"
+# Submittal number shown on the cover sheet / TXT ("08 71 00 - 01.0")
+number_pattern: "{SpecSection} - {Seq:02d}.{Rev}"
+type_abbreviations:
+  Product Data: PD
+  Shop Drawings: SD
+  Product Data and Shop Drawings: PD-SD
+  Samples: SMP
+  Other: SUB
 review_notes_suffix: "_ReviewNotes"
 max_length: 150
 date_format: "%Y-%m-%d"

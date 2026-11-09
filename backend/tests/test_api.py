@@ -12,5 +12,5 @@ def test_api_smoke(data, demo):
         bad = c.post("/api/uploads", files=[("files", ("x.pdf", b"not a pdf", "application/pdf"))]).json()
         assert bad["errors"]
         prev = c.post(f"/api/projects/{p['id']}/naming/preview", json={"params": {"spec_section": "087100", "submittal_no": "2"}}).json()
-        assert prev["name"].startswith("08 71 00-002-0")
+        assert prev["name"] == "08 71 00 - 02.0 - PD.pdf" or prev["name"].startswith("08 71 00 - 02.0")
         assert c.post(f"/api/projects/{p['id']}/jobs", json={"spec_section": "08 71 00", "uploads": {}, "scope": {}}).status_code == 400

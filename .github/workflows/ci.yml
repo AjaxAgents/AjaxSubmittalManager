@@ -1,18 +1,78 @@
 name: CI
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
 jobs:
   backend:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install -r backend/requirements-dev.txt
-      - run: cd backend && python -m pytest -q tests
+      - run: python -m pytest -q tests
+        working-directory: backend
+
   frontend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: "22" }
-      - run: cd frontend && npm install && npm run build
+      - run: npm install && npm run build
+        working-directory: frontend
+      - name: Committed frontend/dist must match the sources
+        run: git diff --stat --exit-code -- frontend/dist || (echo "Run 'make ui' and commit frontend/dist" && exit 1)
+
+  windows-exe:
+    needs: [backend]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt pyinstaller
+      - name: Build single-file exe
+        run: pyinstaller packaging/AjaxSubmittalManager.spec --noconfirm --distpath dist
+      - name: Self-test the exe (starts server, checks API + UI, exits)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\AjaxSubmittalManager.exe" -ArgumentList "--selftest" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content "$env:LOCALAPPDATA\AjaxSubmittalManager\data\asm.log" -ErrorAction SilentlyContinue; exit 1 }
+      - name: Build folder version (fallback for locked-down PCs)
+        shell: pwsh
+        run: |
+          $env:ASM_ONEDIR = "1"
+          pyinstaller packaging/AjaxSubmittalManager.spec --noconfirm --distpath dist-onedir
+          Compress-Archive -Path dist-onedir\AjaxSubmittalManager -DestinationPath dist\AjaxSubmittalManager-folder.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AjaxSubmittalManager-windows
+          path: |
+            dist/AjaxSubmittalManager.exe
+            dist/AjaxSubmittalManager-folder.zip
+      - name: Publish release (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ver = (Select-String -Path backend/asm/__init__.py -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value
+          $tag = "v$ver"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title "Ajax Submittal Manager $ver" --notes "Windows build. Download AjaxSubmittalManager.exe, put it in any folder, double-click. If your PC blocks single-file exes, use AjaxSubmittalManager-folder.zip instead." --target $env:GITHUB_SHA
+          }
+          gh release upload $tag dist/AjaxSubmittalManager.exe dist/AjaxSubmittalManager-folder.zip --clobber

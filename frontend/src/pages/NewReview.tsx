@@ -29,7 +29,7 @@ export function NewReview({ project, tree, library, onLibraryChanged, onStarted,
   const [libBusy, setLibBusy] = useState(false);
   const [instructions, setInstructions] = useState("");
   const [namingPattern, setNamingPattern] = useState("");
-  const [mimic, setMimic] = useState(true);
+  const [mimic, setMimic] = useState(false);
   const [scope, setScope] = useState<ScopeItem[]>([]);
   const [scopeMode, setScopeMode] = useState("flexible");
   const [scopeSrc, setScopeSrc] = useState("");
@@ -167,7 +167,7 @@ export function NewReview({ project, tree, library, onLibraryChanged, onStarted,
             <datalist id="asm-sections">{sections.map((s) => <option key={s.number} value={s.number}>{s.title}</option>)}</datalist>
           </Field>
           <Field label="Section title" className="f-title"><input className="input" placeholder="Auto-filled from the catalog" value={form.spec_title} onChange={(e) => set("spec_title", e.target.value)} /></Field>
-          <Field label="Submittal no." hint="Sequence, e.g. 003"><input className="input mono" placeholder="003" value={form.submittal_no} onChange={(e) => set("submittal_no", e.target.value)} /></Field>
+          <Field label="Submittal no." hint="Sequence, e.g. 01"><input className="input mono" placeholder="01" value={form.submittal_no} onChange={(e) => set("submittal_no", e.target.value)} /></Field>
           <Field label="Revision"><input className="input mono" value={form.revision} onChange={(e) => set("revision", e.target.value)} /></Field>
           <Field label="Type">
             <select className="input" value={form.submittal_type} onChange={(e) => set("submittal_type", e.target.value)}>
@@ -202,7 +202,7 @@ export function NewReview({ project, tree, library, onLibraryChanged, onStarted,
                 <span><b>{est.library_pages}</b> library pages</span>
                 <span><b>{est.submittal_pages}</b> submittal pages</span>
                 <span>~<b>{(est.est_input_tokens / 1000).toFixed(0)}k</b> input tokens</span>
-                <span>est. <b>${est.est_cost_low.toFixed(2)}-${est.est_cost_high.toFixed(2)}</b> {est.mock && "(offline: $0)"}</span>
+                <span title={Object.entries((est as any).by_stage || {}).map(([k, v]) => `${k}: $${Number(v).toFixed(2)}`).join("\n")}>est. <b>${est.est_cost_low.toFixed(2)}-${est.est_cost_high.toFixed(2)}</b> {est.mock && "(offline: $0)"}</span>
                 <span className="muted">job cap ${est.usd_cap?.toFixed(2)}</span>
               </div>
             )} />
@@ -216,8 +216,8 @@ export function NewReview({ project, tree, library, onLibraryChanged, onStarted,
           <div className="count">{instructions.length}/2000</div>
         </Card>
         <Card title="File naming" icon="file" sub="Division 01 rules found during the run take precedence over the company default.">
-          <Field label="Naming pattern (optional override)" hint="Tokens: {SpecSection} {Seq:03d} {Rev} {SpecTitle} {Type} {Title} {ProjectNumber} {Date}">
-            <input className="input mono" placeholder="{SpecSection}-{Seq:03d}-{Rev} {SpecTitle} - {Type}" value={namingPattern} onChange={(e) => setNamingPattern(e.target.value)} />
+          <Field label="Naming pattern (optional override)" hint="Tokens: {SpecSection} {Seq:02d} {Rev} {SpecTitle} {Type} {TypeAbbr} (PD/SD) {Title} {ProjectNumber} {Date}">
+            <input className="input mono" placeholder="{SpecSection} - {Seq:02d}.{Rev} {SpecTitle} - {TypeAbbr}" value={namingPattern} onChange={(e) => setNamingPattern(e.target.value)} />
           </Field>
           <label className="toggle">
             <input type="checkbox" checked={mimic} onChange={(e) => setMimic(e.target.checked)} />

@@ -2,11 +2,19 @@ from asm.outputs import naming
 
 
 def test_default_pattern():
-    params = {"spec_section": "08 71 00", "submittal_no": "3", "revision": "0", "spec_title": "Door Hardware",
+    params = {"spec_section": "08 71 00", "submittal_no": "1", "revision": "0", "spec_title": "Door Hardware",
               "submittal_type": "Product Data"}
     pat, src = naming.choose_pattern(params)
-    assert naming.render(pat, naming.tokens(params, {})) == "08 71 00-003-0 Door Hardware - Product Data"
-    assert src == "company default"
+    assert naming.render(pat, naming.tokens(params, {})) == "08 71 00 - 01.0 Door Hardware - PD"
+    assert src == "Ajax default"
+    assert naming.submittal_number(params) == "08 71 00 - 01.0"
+    sd = dict(params, submittal_type="Shop Drawings", submittal_no="12", revision="1")
+    assert naming.render(pat, naming.tokens(sd, {})) == "08 71 00 - 12.1 Door Hardware - SD"
+
+
+def test_infer_ajax_style():
+    pat = naming.infer_pattern_from_example("08 71 00 - 01.0 Door Hardware - PD.pdf")
+    assert pat == "{SpecSection} - {Seq:02d}.{Rev} {SpecTitle} - {TypeAbbr}"
 
 
 def test_infer_from_example():
