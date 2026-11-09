@@ -1,2 +1,2 @@
-# AjaxSubmitalManager
+# AjaxSubmittalManager
 Ajax STOBG Submittal Management
