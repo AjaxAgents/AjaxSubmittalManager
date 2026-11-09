@@ -1,0 +1,20 @@
+# Bluebeam-facing markup conventions (spec V2 section 8). Colors are hex.
+author: "Ajax ASM"
+internal_author: "Ajax ASM (internal)"
+font: Helv            # PDF base-14 Helvetica; Bluebeam maps to Arial/Helvetica
+font_size: 10
+internal_layer_name: "ASM Internal Review"
+internal_layer_visible: false
+include_internal_markups: true    # put compliant/human-review evidence marks on the hidden layer
+
+subjects:
+  selection:     { subject: "Selection",     color: "#1F5FBF", width: 1.5, opacity: 0.35 }
+  deviation:     { subject: "Deviation",     color: "#D6302C", width: 1.5, opacity: 1.0 }
+  note:          { subject: "Note",          color: "#000000", width: 1.0, opacity: 1.0 }
+  not_submitted: { subject: "Not Submitted", color: "#D6302C", width: 1.5, opacity: 1.0 }
+  review_stamp:  { subject: "Review Stamp",  color: "#232729", width: 1.5, opacity: 1.0 }
+  human_review:  { subject: "Human Review",  color: "#E5A100", width: 1.5, opacity: 1.0 }
+  compliant:     { subject: "Compliant",     color: "#1F8A4C", width: 1.5, opacity: 1.0 }
+
+cloud_intensity: 1        # /BE /I value for revision clouds (0-2, integer)
+highlight_color: "#FFE14D"

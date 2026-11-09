@@ -1,0 +1,9 @@
+# Default output naming (spec V2 section 9). Division 01 rules or the
+# "mimic example naming" toggle override this per run.
+#
+# Tokens: {SpecSection} {Seq} {Seq:03d} {Rev} {SpecTitle} {Type} {Title}
+#         {ProjectNumber} {ProjectName} {Date} {Contractor}
+pattern: "{SpecSection}-{Seq:03d}-{Rev} {SpecTitle} - {Type}"
+review_notes_suffix: "_ReviewNotes"
+max_length: 150
+date_format: "%Y-%m-%d"

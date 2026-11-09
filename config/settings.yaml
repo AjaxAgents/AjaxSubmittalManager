@@ -1,0 +1,24 @@
+# Run defaults. Most can be overridden per project or per run in the GUI.
+budget:
+  job_usd_cap: 15.00          # hard stop; remaining requirements become Human Review (budget_hit)
+  job_token_cap: 3000000
+scope:
+  default_mode: flexible      # flexible | strict
+  flexible_extra_pages: 20
+  page_budget: 150            # hard ceiling of library pages sent per job
+render:
+  sheet_dpi: 100              # full drawing sheet sent to Claude
+  crop_dpi: 250               # cropped region of a sheet / small print
+  preview_dpi: 110            # GUI page previews
+  max_image_px: 1568
+library:
+  summarize_with_ai: true     # Haiku summaries per section/sheet when an API key is set
+  ocr_if_no_text: true        # run OCR (ocrmypdf or Tesseract) on pages without a text layer
+output:
+  max_file_mb: 50
+  min_image_dpi: 150
+  include_spec_excerpt: auto  # auto (Division 01 / reviewer decides) | always | never
+  flatten: false              # never flatten by default: markups must stay editable
+server:
+  host: 127.0.0.1
+  port: 8765
