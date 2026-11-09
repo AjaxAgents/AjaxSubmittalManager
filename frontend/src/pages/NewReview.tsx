@@ -17,9 +17,9 @@ function useDebounced<T>(v: T, ms = 450): T {
   return d;
 }
 
-export function NewReview({ project, tree, library, onLibraryChanged, onStarted, settingsMock, apiKeySet }: {
+export function NewReview({ project, tree, library, onLibraryChanged, onStarted, settingsMock, apiKeySet, defaultMode }: {
   project: Project; tree: TreeNode[]; library: LibraryFile[]; onLibraryChanged: () => void; onStarted: (j: Job) => void;
-  settingsMock: boolean; apiKeySet: boolean;
+  settingsMock: boolean; apiKeySet: boolean; defaultMode?: string;
 }) {
   const toast = useToast();
   const [form, setForm] = useState({ spec_section: "", spec_title: "", submittal_no: "", revision: "0", submittal_type: "Product Data",
@@ -30,6 +30,8 @@ export function NewReview({ project, tree, library, onLibraryChanged, onStarted,
   const [instructions, setInstructions] = useState("");
   const [namingPattern, setNamingPattern] = useState("");
   const [mimic, setMimic] = useState(false);
+  const [mode, setMode] = useState(defaultMode === "single" ? "single" : "cross");
+  useEffect(() => { if (defaultMode) setMode(defaultMode === "single" ? "single" : "cross"); }, [defaultMode]);
   const [scope, setScope] = useState<ScopeItem[]>([]);
   const [scopeMode, setScopeMode] = useState("flexible");
   const [scopeSrc, setScopeSrc] = useState("");
@@ -111,8 +113,8 @@ export function NewReview({ project, tree, library, onLibraryChanged, onStarted,
   const dScope = useDebounced(JSON.stringify(scope), 500);
   useEffect(() => {
     if (!subIds.length) { setEst(null); return; }
-    api.estimate(project.id, { upload_ids: subIds, scope_items: scope }).then(setEst).catch(() => {});
-  }, [dScope, subIds.join(",")]);
+    api.estimate(project.id, { upload_ids: subIds, scope_items: scope, review_mode: mode }).then(setEst).catch(() => {});
+  }, [dScope, subIds.join(","), mode]);
   const dForm = useDebounced(JSON.stringify({ form, namingPattern, mimic, ex: files.examples.map((u) => u.id) }), 400);
   useEffect(() => {
     if (!form.spec_section) { setPreview(null); return; }
@@ -132,7 +134,7 @@ export function NewReview({ project, tree, library, onLibraryChanged, onStarted,
     setStarting(true);
     try {
       const job = await api.createJob(project.id, {
-        ...form, spec_section: secNorm, instructions, naming_pattern: namingPattern, mimic_example_naming: mimic,
+        ...form, spec_section: secNorm, instructions, naming_pattern: namingPattern, mimic_example_naming: mimic, review_mode: mode,
         uploads: { submittal: subIds, examples: files.examples.map((u) => u.id), div01: files.div01.map((u) => u.id) },
         scope: { mode: scopeMode, items: scope.length ? scope : [{ id: designated, locked: true }] },
       });
@@ -232,12 +234,21 @@ export function NewReview({ project, tree, library, onLibraryChanged, onStarted,
       </div>
 
       <div className="runbar">
+        <div className="seg seg-mode" role="radiogroup" aria-label="Review mode">
+          <button role="radio" aria-checked={mode === "cross"} className={mode === "cross" ? "on" : ""} onClick={() => setMode("cross")}
+            title="Two independent Opus reviewers (one proves compliance, one hunts deviations); disagreements are adjudicated. Most thorough.">
+            Cross-examined <span className="seg-sub">2 agents</span></button>
+          <button role="radio" aria-checked={mode === "single"} className={mode === "single" ? "on" : ""} onClick={() => setMode("single")}
+            title="One Opus reviewer builds the checklist and reviews in a single pass. Cheaper and faster; no second opinion.">
+            Single agent <span className="seg-sub">faster</span></button>
+        </div>
         <div className="runbar-info">
           {problems.length ? (
             <span className="muted"><Icon name="alert" size={15} /> {problems[0]}</span>
           ) : (
             <span><Icon name="check" size={15} className="t-ok" /> Ready: {files.submittal.reduce((s, u) => s + u.pages, 0)} submittal pages · {scope.length} reference items · {scopeMode} scope
-              {est && !est.mock && <> · est. ${est.est_cost_low.toFixed(2)}-${est.est_cost_high.toFixed(2)}</>}</span>
+              {est && !est.mock && <> · est. ${est.est_cost_low.toFixed(2)}-${est.est_cost_high.toFixed(2)}
+                {(est as any).alt_mode_mid !== undefined && <span className="muted"> (other mode ~${Number((est as any).alt_mode_mid).toFixed(2)})</span>}</>}</span>
           )}
         </div>
         <Button variant="primary" size="lg" icon="play" onClick={run} loading={starting} disabled={!!problems.length}>Run review</Button>

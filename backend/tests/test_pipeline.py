@@ -11,7 +11,7 @@ from conftest import upload
 
 def _run(project, demo, **extra):
     params = {"spec_section": "08 71 00", "submittal_no": "003", "revision": "0", "submittal_type": "Product Data",
-              "instructions": "", "mimic_example_naming": True,
+              "instructions": "", "mimic_example_naming": False,
               "uploads": {"submittal": [upload(demo, "Submittal - Door Hardware Product Data.pdf")],
                           "examples": [upload(demo, "Example - 08 11 13-001-0 Hollow Metal Doors - Product Data.pdf")],
                           "div01": [upload(demo, "Division 01 - 01 33 00 Submittal Procedures.pdf")]},
@@ -25,8 +25,9 @@ def test_full_run(project, demo):
     j = _run(project, demo)
     assert j["status"] == "done", j["error"]
     r = j["result"]
-    assert r["pdf_name"] == "08 71 00-003-0 Door Hardware - Product Data.pdf"
-    assert r["txt_name"] == "08 71 00-003-0 Door Hardware - Product Data_ReviewNotes.txt"
+    assert r["pdf_name"] == "08 71 00 - 03.0 Door Hardware - PD.pdf"
+    assert r["naming_source"] == "Division 01"
+    assert r["txt_name"] == "08 71 00 - 03.0 Door Hardware - PD_ReviewNotes.txt"
     assert r["counts"]["non_compliant"] >= 2       # hinge size + addendum finish
     txt = open(r["txt"], encoding="ascii").read()
     lines = txt.splitlines()
@@ -62,3 +63,21 @@ def test_rerun_with_notes(project, demo):
 def test_strict_scope_gap_becomes_human_review(project, demo):
     j = _run(project, demo, scope={"mode": "strict", "items": [{"id": "S:08 71 00", "locked": True}]})
     assert j["status"] == "done"
+
+
+def test_single_agent_mode(project, demo):
+    j = _run(project, demo, review_mode="single")
+    assert j["status"] == "done", j["error"]
+    r = j["result"]
+    assert r["review_mode"] == "single"
+    assert r["counts"]["non_compliant"] >= 2
+    assert all(v["decided_by"] == "single" for v in r["verdicts"])
+    txt = open(r["txt"], encoding="ascii").read()
+    assert "Review mode: single agent" in txt
+    # re-run with notes works on a single-agent run too
+    nid = [v for v in r["verdicts"] if v["result"] == "non_compliant"][0]["txt_id"]
+    j2 = db.create_job(project["id"], dict(j["params"], _rerun_of=j["id"]), parent_job=j["id"])
+    asyncio.run(pipeline.run_job(j2["id"], rerun_notes=f"{nid} accepted per RFI 112."))
+    j2 = db.get_job(j2["id"])
+    assert j2["status"] == "done", j2["error"]
+    assert j2["result"]["counts"]["non_compliant"] == r["counts"]["non_compliant"] - 1

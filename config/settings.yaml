@@ -1,4 +1,7 @@
 # Run defaults. Most can be overridden per project or per run in the GUI.
+review:
+  default_mode: cross         # cross = Compliance Advocate + Non-Compliance Examiner (2 Opus agents, cross-examined)
+                              # single = one Opus agent plans and reviews in one pass (~40% cheaper, faster)
 budget:
   job_usd_cap: 6.00           # hard stop; remaining requirements become Human Review (budget_hit)
   job_token_cap: 3000000

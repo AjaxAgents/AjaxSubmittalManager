@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ..schemas import Finding, PlannerResult, ReviewResult, Verdict
+from ..schemas import Finding, PlannerResult, ReviewResult, SingleReviewResult, Verdict
 
 _W = re.compile(r"[A-Za-z0-9.]+")
 
@@ -137,3 +137,57 @@ def rule_verdicts(plan: PlannerResult, adv: ReviewResult, exa: ReviewResult) -> 
             "pages": pages,
         })
     return verdicts, disputes
+
+
+# ----------------------------------------------------------------------------- single-agent mode
+
+_ADV_STATUS = {"compliant": "met", "non_compliant": "not_met", "human_review": "no_evidence", "not_applicable": "not_applicable"}
+_EXA_STATUS = {"compliant": "no_issue", "non_compliant": "deviation", "human_review": "unclear", "not_applicable": "not_applicable"}
+
+
+def single_to_parts(res: SingleReviewResult) -> tuple[PlannerResult, ReviewResult, ReviewResult]:
+    """Express a single-agent result in the two-reviewer shapes so verification, markup selection, re-runs
+    and packaging are shared with cross-examined mode."""
+    plan = PlannerResult(spec_section_title=res.spec_section_title, requirements=res.requirements,
+                         package_rules=res.package_rules, scope_notes=res.scope_notes)
+    adv, exa = [], []
+    for f in res.findings:
+        kind = {"rfi": "rfi", "faulty_data": "faulty_data", "missing_info": "missing_info"}.get(f.human_review_kind, "questionable") \
+            if f.result == "human_review" else ("deviation" if f.result == "non_compliant" else "none")
+        common = dict(requirement_id=f.requirement_id, confidence=f.confidence, evidence=[e.model_copy() for e in f.evidence],
+                      reason=f.reason, proposed_markups=[m.model_copy() for m in f.markups])
+        adv.append(Finding(agent="advocate", status=_ADV_STATUS[f.result], issue_kind="none", **common))
+        exa.append(Finding(agent="examiner", status=_EXA_STATUS[f.result], issue_kind=kind, **common))
+    return (plan, ReviewResult(findings=adv, general_markups=res.general_markups, extra_issues=res.extra_issues),
+            ReviewResult(findings=exa))
+
+
+def single_verdicts(res: SingleReviewResult, adv_verified: ReviewResult, exa_verified: ReviewResult) -> list[Verdict]:
+    """Final verdicts straight from the single agent, after citation verification: a compliant or
+    non-compliant call whose citation could not be verified, or with low confidence, goes to Human Review."""
+    adv_c = {f.requirement_id: f for f in adv_verified.findings}
+    exa_c = {f.requirement_id: f for f in exa_verified.findings}
+    by_req = {f.requirement_id: f for f in res.findings}
+    out: list[Verdict] = []
+    for r in res.requirements:
+        f = by_req.get(r.id)
+        cite = f"{r.source.section} {r.source.article}".strip()
+        if f is None:
+            out.append(Verdict(requirement_id=r.id, result="human_review", human_review_kind="questionable",
+                               summary=f"Not evaluated by the reviewer; check manually ({cite}).", decided_by="single"))
+            continue
+        v = (adv_c if f.result == "compliant" else exa_c).get(r.id)
+        pages = [e.page for e in (v.evidence if v else [])]
+        result, kind, summary = f.result, f.human_review_kind, f.reason
+        if result in ("compliant", "non_compliant"):
+            if v is not None and v.confidence == "low":
+                kind = "questionable"
+                summary = (f"Unverified: {f.reason}" if f.confidence != "low" else f.reason)
+                result = "human_review"
+        if result == "human_review" and not kind:
+            kind = "questionable"
+        if result != "human_review":
+            kind = ""
+        out.append(Verdict(requirement_id=r.id, result=result, human_review_kind=kind, summary=summary,  # type: ignore[arg-type]
+                           pages=pages, decided_by="single"))
+    return out

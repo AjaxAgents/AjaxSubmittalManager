@@ -17,7 +17,7 @@ export interface TreeNode {
 export interface ScopeItem { id: string; reason?: string; locked?: boolean; pages?: number[] | null }
 export interface Settings {
   api_key_set: boolean; api_key_hint: string; mock: boolean; stages: Record<string, string>; usd_cap: number;
-  scope_mode: string; page_budget: number; web_search: boolean; output_dir: string; key_location?: string;
+  scope_mode: string; page_budget: number; web_search: boolean; output_dir: string; key_location?: string; review_mode?: string;
 }
 export interface Health { ok: boolean; version: string; api_key_set: boolean; mock: boolean; ocr: string; data_dir: string }
 export interface Job {
@@ -68,7 +68,7 @@ export const api = {
   suggestScope: (pid: string, body: { spec_section: string; upload_ids: string[]; instructions: string; reset?: boolean }) =>
     fetch(`/api/projects/${pid}/scope/suggest`, json("POST", body))
       .then(j<{ items: ScopeItem[]; mode: string; source: string; section: string; section_title: string; found: boolean }>),
-  estimate: (pid: string, body: { upload_ids: string[]; scope_items: ScopeItem[] }) =>
+  estimate: (pid: string, body: { upload_ids: string[]; scope_items: ScopeItem[]; review_mode?: string }) =>
     fetch(`/api/projects/${pid}/estimate`, json("POST", body)).then(j<Estimate>),
   namingPreview: (pid: string, params: any, example_upload_ids: string[]) =>
     fetch(`/api/projects/${pid}/naming/preview`, json("POST", { params, example_upload_ids }))

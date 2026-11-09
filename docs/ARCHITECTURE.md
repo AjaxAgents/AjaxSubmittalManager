@@ -38,6 +38,11 @@ Browser (React)  --REST/SSE-->  FastAPI (localhost:8765)  --Messages API-->  Cla
 
 Re-run reuses intake/planner/reviewer JSON and redoes 5-7 with the reviewer's notes.
 
+**Single-agent mode** (`review_mode: single`): steps 3-4 are replaced by one Opus agent (`prompts/single.md`,
+`stages.run_single`) that returns requirements + final verdicts + markups (`SingleReviewResult`). It is
+converted to the two-reviewer shapes (`adjudicate.single_to_parts`) so citation verification, markup selection,
+re-runs and packaging are shared; `single_verdicts` sends any unverified or low-confidence call to Human Review.
+
 ## Deviations from the written spec (deliberate, v1)
 - Plain CSS with design tokens instead of Tailwind (fewer moving parts; same tokens).
 - Page previews are rendered server-side by PyMuPDF (includes annotations exactly as written) instead of pdf.js.

@@ -21,8 +21,8 @@ from ..config import mock_mode, models_cfg, prompt
 from ..library.catalog import catalog_index_text
 from ..library.tools import LibraryTools, ScopeGuard
 from ..schemas import (AdjudicatorResult, Evidence, Finding, MarkupInstruction, PackageRules, PageInfo,
-                       PlannerResult, Product, QAResult, Requirement, ReviewResult, ScopeResult, SourceRef,
-                       SubmittalMap)
+                       PlannerResult, Product, QAResult, Requirement, ReviewResult, ScopeResult, SingleReviewResult,
+                       SourceRef, SubmittalMap)
 from . import mock
 from .base import image_block, pdf_block, run_agent, text_block
 from .llm import CostTracker
@@ -209,6 +209,38 @@ async def run_reviewer(ctx: JobContext, role: str, smap: SubmittalMap, plan: Pla
     for f in run.result.findings:
         f.agent = role  # type: ignore[assignment]
     return run.result
+
+
+# ----------------------------------------------------------------------------- single-agent mode
+
+async def run_single(ctx: JobContext, smap: SubmittalMap) -> SingleReviewResult:
+    """One Opus agent: builds the checklist and reviews it in one pass (no cross-examination)."""
+    if mock_mode():
+        return mock.single(ctx, smap)
+    tools = LibraryTools(ctx.guard, "single", ctx.submittal_path, ctx.submittal_pages).tools(include_submittal_viewer=True)
+    content: list[dict[str, Any]] = [text_block(ctx.header_text()), text_block(_page_map_text(smap))]
+    if ctx.div01_paths:
+        div = "\n".join(f"--- {p.name} ---\n" + "\n".join(pg.get_text("text") for pg in pymupdf.open(p)) for p in ctx.div01_paths)
+        content.append(text_block(f"DIVISION 01 SUBMITTAL PROCEDURES (provided for this run):\n<document_content>\n{div[:60000]}\n</document_content>"))
+    if ctx.example_paths:
+        names = ", ".join(p.name for p in ctx.example_paths)
+        content.append(text_block(
+            f"EXAMPLE SUBMITTALS (format reference only, never compliance evidence). File names: {names}\n"
+            f"First pages:\n<document_content>\n{_first_pages_text(ctx.example_paths)}\n</document_content>"))
+    content.append(text_block(catalog_index_text(ctx.project_id, ctx.guard.scope_ids())))
+    content.append(ctx.submittal_block(cache=True))
+    content.append(text_block("Build the requirements, review every one against the submittal, and call submit_result."))
+    run = await run_agent(stage="single", tracker=ctx.tracker, system=prompt("single"), user_content=content,
+                          result_model=SingleReviewResult, tools=tools, on_event=ctx.on_tool, web_search=True)
+    res = run.result
+    # renumber requirements defensively and remap findings
+    remap = {}
+    for i, r in enumerate(res.requirements, 1):
+        remap[r.id] = f"R-{i:03d}"
+        r.id = remap[r.id]
+    for f in res.findings:
+        f.requirement_id = remap.get(f.requirement_id, f.requirement_id)
+    return res
 
 
 # ----------------------------------------------------------------------------- 4 adjudicator

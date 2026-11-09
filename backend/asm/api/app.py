@@ -118,6 +118,7 @@ class SettingsIn(BaseModel):
     scope_mode: Optional[str] = None
     page_budget: Optional[int] = None
     web_search: Optional[bool] = None
+    review_mode: Optional[str] = None
 
 
 @app.get("/api/settings")
@@ -129,6 +130,7 @@ def get_settings() -> dict:
         "stages": {k: v.get("model") for k, v in (m.get("stages") or {}).items()},
         "usd_cap": s.get("budget", {}).get("job_usd_cap"), "scope_mode": s.get("scope", {}).get("default_mode"),
         "page_budget": s.get("scope", {}).get("page_budget"), "web_search": bool((m.get("web_search") or {}).get("enabled")),
+        "review_mode": (s.get("review") or {}).get("default_mode", "cross"),
         "output_dir": str(outputs_dir()), "key_location": str(ENV_PATH),
     }
 
@@ -153,6 +155,8 @@ def put_settings(body: SettingsIn) -> dict:
         sets.setdefault("scope", {})["default_mode"] = body.scope_mode
     if body.page_budget:
         sets.setdefault("scope", {})["page_budget"] = int(body.page_budget)
+    if body.review_mode in ("cross", "single"):
+        sets.setdefault("review", {})["default_mode"] = body.review_mode
     if sets:
         save_overrides("settings", sets)
     reload_all()
@@ -384,6 +388,7 @@ async def scope_suggest(pid: str, body: ScopeIn) -> dict:
 class EstimateIn(BaseModel):
     upload_ids: list[str] = []
     scope_items: list[dict] = []
+    review_mode: str = ""
 
 
 @app.post("/api/projects/{pid}/estimate")
@@ -399,9 +404,12 @@ def estimate(pid: str, body: EstimateIn) -> dict:
         lib_pages += pages
         lib_tokens += int(c.get("token_est") or pages * 700) if c["kind"] != "drawing_sheet" else 1600 * pages
     from ..costing import estimate as cost_estimate
-    e = cost_estimate(sub_pages, lib_tokens)
+    mode = body.review_mode or (settings_cfg().get("review") or {}).get("default_mode", "cross")
+    e = cost_estimate(sub_pages, lib_tokens, mode=mode)
+    alt = cost_estimate(sub_pages, lib_tokens, mode="cross" if mode == "single" else "single")
     return {"submittal_pages": sub_pages, "library_pages": lib_pages, "est_input_tokens": e["input_tokens"],
             "est_cost_low": e["low"], "est_cost_high": e["high"], "est_cost_mid": e["mid"], "by_stage": e["by_stage"],
+            "alt_mode_mid": alt["mid"],
             "usd_cap": settings_cfg().get("budget", {}).get("job_usd_cap"), "mock": mock_mode()}
 
 
@@ -439,6 +447,7 @@ class JobIn(BaseModel):
     instructions: str = ""
     naming_pattern: str = ""
     mimic_example_naming: bool = False
+    review_mode: str = ""              # cross | single ("" = settings default)
     usd_cap: Optional[float] = None
     uploads: dict[str, list[str]]
     scope: dict

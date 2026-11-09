@@ -21,7 +21,7 @@ def _c(stage: str, inp: float = 0, out: float = 0, read: float = 0, write: float
     return (inp * p["input"] + out * p["output"] + read * p["cache_read"] + write * p["cache_write"]) / 1e6
 
 
-def estimate(sub_pages: int, lib_tokens: int, n_req: int | None = None) -> dict[str, Any]:
+def estimate(sub_pages: int, lib_tokens: int, n_req: int | None = None, mode: str = "cross") -> dict[str, Any]:
     inline_max = int(models_cfg().get("limits", {}).get("submittal_inline_max_pages", 75))
     S = sub_pages * PAGE_TOK if sub_pages <= inline_max else sub_pages * 700 + 20 * PAGE_TOK  # text + on-demand pages
     L = max(lib_tokens, 3000)
@@ -34,6 +34,16 @@ def estimate(sub_pages: int, lib_tokens: int, n_req: int | None = None) -> dict[
     disputes = max(2, n // 4)
     exc_pages = min(20, int(disputes * 1.5))
 
+    if mode == "single":
+        stages = {
+            "intake": _c("intake", inp=S + 3000, out=sub_pages * 60 + 1500),
+            # one Opus pass: reads the whole section itself, writes requirements + verdicts + markups
+            "single": _c("single", write=prefix + L, read=(turns - 1) * (prefix + L), out=n * 420 + 8000),
+        }
+        total = sum(stages.values())
+        return {"by_stage": {k: round(v, 3) for k, v in stages.items()}, "low": round(total * 0.75, 2),
+                "mid": round(total, 2), "high": round(total * 1.5, 2), "requirements_assumed": n,
+                "input_tokens": int(S + L + turns * prefix)}
     stages = {
         "intake": _c("intake", inp=S + 3000, out=sub_pages * 60 + 1500),
         "planner": _c("planner", inp=2 * (L + 5000) + 10000, out=n * 120 + 3000),

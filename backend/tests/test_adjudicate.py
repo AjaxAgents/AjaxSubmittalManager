@@ -34,3 +34,22 @@ def test_verifier_downgrades_bad_citations():
     notes = verify_findings(r, ["Closer Grade 1 cast iron body " * 3])
     assert all(f.confidence == "low" for f in r.findings) and len(notes) >= 2
     assert quote_on_page("grade 1  cast", "Closer Grade 1 cast iron")
+
+
+def test_single_verdicts_downgrade_unverified():
+    from asm.agents.adjudicate import single_to_parts, single_verdicts
+    from asm.schemas import SingleFinding, SingleReviewResult
+    res = SingleReviewResult(spec_section_title="t", requirements=[req(1), req(2), req(3)], findings=[
+        SingleFinding(requirement_id="R-001", result="compliant", confidence="high",
+                      evidence=[Evidence(page=1, quote="Grade 1")], reason="ok"),
+        SingleFinding(requirement_id="R-002", result="non_compliant", confidence="high",
+                      evidence=[Evidence(page=1, quote="Grade 9 bogus widget")], reason="bad"),
+    ])
+    plan, adv, exa = single_to_parts(res)
+    page = ["Closer Grade 1 cast iron body " * 3]
+    verify_findings(adv, page)
+    verify_findings(exa, page)
+    v = {x.requirement_id: x for x in single_verdicts(res, adv, exa)}
+    assert v["R-001"].result == "compliant"
+    assert v["R-002"].result == "human_review" and v["R-002"].summary.startswith("Unverified")
+    assert v["R-003"].result == "human_review"  # not evaluated

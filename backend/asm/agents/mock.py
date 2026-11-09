@@ -121,8 +121,8 @@ def planner(ctx: "JobContext", smap: SubmittalMap) -> PlannerResult:
         with pymupdf.open(p) as d:
             t = " ".join(pg.get_text("text") for pg in d)
         t = " ".join(t.split())
-        if "[Section Number]-[Sequence Number]-[Revision]" in t:
-            rules.naming_pattern = "{SpecSection}-{Seq:03d}-{Rev} {SpecTitle} - {Type}"
+        if "[Section Number] - [Sequence].[Revision]" in t:
+            rules.naming_pattern = "{SpecSection} - {Seq:02d}.{Rev} {SpecTitle} - {TypeAbbr}"
             rules.naming_source = f"{p.name} 1.2.B"
         if re.search(r"deviation summary", t, re.I):
             rules.other_rules.append("Deviation summary page required; cloud each deviation (01 33 00 1.2.E)")
@@ -264,3 +264,32 @@ def adjudicator(disputes: list[dict[str, Any]], notes: str = "") -> AdjudicatorR
                                        summary=f"Advocate: {d.get('advocate', {}).get('reason', '-')[:70]} / Examiner: {d.get('examiner', {}).get('reason', '-')[:70]}",
                                        pages=d.get("pages", [])))
     return AdjudicatorResult(decisions=out)
+
+
+def single(ctx: "JobContext", smap: SubmittalMap):
+    """Offline stand-in for single-agent mode: mock planner + both mock reviewers folded into one result."""
+    from ..schemas import SingleFinding, SingleReviewResult
+    from .adjudicate import rule_verdicts
+    plan = planner(ctx, smap)
+    adv = reviewer("advocate", ctx, smap, plan)
+    exa = reviewer("examiner", ctx, smap, plan)
+    verdicts, disputes = rule_verdicts(plan, adv, exa)
+    A = {f.requirement_id: f for f in adv.findings}
+    B = {f.requirement_id: f for f in exa.findings}
+    by = {v.requirement_id: v for v in verdicts}
+    findings = []
+    for r in plan.requirements:
+        v = by.get(r.id)
+        a, b = A.get(r.id), B.get(r.id)
+        if v is None:  # disputed -> a single agent would have to call it; mock sends it to a human
+            result, kind, reason = "human_review", "questionable", (b.reason if b else "Unclear")
+        else:
+            result, kind, reason = v.result, v.human_review_kind, v.summary
+        src = b if result == "non_compliant" else a
+        findings.append(SingleFinding(requirement_id=r.id, result=result, human_review_kind=kind,
+                                      confidence=(src.confidence if src else "low") if result != "human_review" else "medium",
+                                      evidence=(src.evidence if src else []), reason=reason,
+                                      markups=(src.proposed_markups if src else [])))
+    return SingleReviewResult(spec_section_title=plan.spec_section_title, requirements=plan.requirements,
+                              findings=findings, package_rules=plan.package_rules, scope_notes=plan.scope_notes,
+                              extra_issues=adv.extra_issues + exa.extra_issues, general_markups=adv.general_markups)

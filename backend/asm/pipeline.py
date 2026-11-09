@@ -20,7 +20,7 @@ import pymupdf
 
 from . import db
 from .agents import stages
-from .agents.adjudicate import rule_verdicts, verify_findings
+from .agents.adjudicate import rule_verdicts, single_to_parts, single_verdicts, verify_findings
 from .agents.llm import BudgetExceeded, Cancelled, CostTracker
 from .config import data_dir, markup_cfg, mock_mode, outputs_dir, settings_cfg
 from .library.catalog import section_lookup
@@ -31,9 +31,18 @@ from .outputs.packager import build_package
 from .outputs.txt_writer import build_txt
 from .pdf.util import inspect_pdf, ocr_pdf
 from .schemas import (AdjudicatorResult, MarkupInstruction, PackageRules, PlannerResult, QAResult, ReviewResult,
-                      SubmittalMap, Verdict)
+                      SingleReviewResult, SubmittalMap, Verdict)
 
 log = logging.getLogger("asm.pipeline")
+
+STAGES_SINGLE = [
+    ("prepare", "Prepare & combine"),
+    ("intake", "Intake"),
+    ("single", "Reviewer (single agent)"),
+    ("adjudicator", "Verify citations"),
+    ("assemble", "Markup & Assemble"),
+    ("qa", "QA Check"),
+]
 
 STAGES = [
     ("prepare", "Prepare & combine"),
@@ -225,7 +234,12 @@ async def run_job(job_id: str, rerun_notes: str = "") -> None:
     jd = job_dir(job_id)
     work = jd / "work"
     db.update_job(job_id, status="running", error="")
-    ev.emit("job", {"status": "running", "mock": mock_mode(), "stages": STAGES})
+    mode = params.get("review_mode") or (settings_cfg().get("review") or {}).get("default_mode", "cross")
+    mode = "single" if mode == "single" else "cross"
+    params["review_mode"] = mode
+    ev.emit("job", {"status": "running", "mock": mock_mode(), "mode": mode,
+                    "stages": STAGES_SINGLE if mode == "single" else STAGES})
+    single: SingleReviewResult | None = None
     budget_hit = False
     current = "prepare"
     try:
@@ -279,11 +293,37 @@ async def run_job(job_id: str, rerun_notes: str = "") -> None:
         # ---------------------------------------------------------------- intake / planner (or reuse)
         if parent:
             smap = SubmittalMap.model_validate_json((work / "intake.json").read_text(encoding="utf-8"))
-            plan = PlannerResult.model_validate_json((work / "planner.json").read_text(encoding="utf-8"))
-            adv = ReviewResult.model_validate_json((work / "advocate.json").read_text(encoding="utf-8"))
-            exa = ReviewResult.model_validate_json((work / "examiner.json").read_text(encoding="utf-8"))
-            for k in ("intake", "planner", "advocate", "examiner"):
+            if (work / "single.json").exists():
+                mode = params["review_mode"] = "single"
+                single = SingleReviewResult.model_validate_json((work / "single.json").read_text(encoding="utf-8"))
+                plan, adv, exa = single_to_parts(single)
+                reused = ("intake", "single")
+            else:
+                plan = PlannerResult.model_validate_json((work / "planner.json").read_text(encoding="utf-8"))
+                adv = ReviewResult.model_validate_json((work / "advocate.json").read_text(encoding="utf-8"))
+                exa = ReviewResult.model_validate_json((work / "examiner.json").read_text(encoding="utf-8"))
+                reused = ("intake", "planner", "advocate", "examiner")
+            for k in reused:
                 step.skip(k, "reused from previous run")
+        elif mode == "single":
+            current = "intake"
+            step.start("intake")
+            smap = await stages.run_intake(ctx)
+            _save(work / "intake.json", smap)
+            step.done("intake", f"{len(smap.products)} products, {len(smap.pages)} pages mapped")
+            current = "single"
+            step.start("single")
+            try:
+                single = await stages.run_single(ctx, smap)
+            except BudgetExceeded as exc:
+                raise RuntimeError(f"{exc} before the single-agent review finished. Raise the job cap in Settings.") from exc
+            _save(work / "single.json", single)
+            plan, adv, exa = single_to_parts(single)
+            if not params.get("spec_title") and plan.spec_section_title:
+                params["spec_title"] = plan.spec_section_title
+                db.update_job(job_id, params=params)
+            _save(work / "planner.json", plan)
+            step.done("single", f"{len(plan.requirements)} requirements reviewed")
         else:
             current = "intake"
             step.start("intake")
@@ -331,7 +371,11 @@ async def run_job(job_id: str, rerun_notes: str = "") -> None:
         current = "adjudicator"
         step.start("adjudicator")
         vnotes = verify_findings(adv, page_texts) + verify_findings(exa, page_texts)
-        verdicts, disputes = rule_verdicts(plan, adv, exa)
+        if single is not None:  # both shapes carry the same evidence: report each note once
+            vnotes = list(dict.fromkeys(n.split(" ", 1)[1] for n in vnotes))
+            verdicts, disputes = single_verdicts(single, adv, exa), []
+        else:
+            verdicts, disputes = rule_verdicts(plan, adv, exa)
         prev_ids: dict[str, str] = {}
         if parent and (work / "verdicts.json").exists():
             prev = json.loads((work / "verdicts.json").read_text(encoding="utf-8"))
@@ -485,6 +529,8 @@ async def run_job(job_id: str, rerun_notes: str = "") -> None:
         current = "qa"
         step.start("qa")
         fmt = [f"File name per {nsrc}: {base}.pdf"]
+        fmt.append("Review mode: single agent (one Opus pass, no cross-examination)." if mode == "single" else
+                   "Review mode: cross-examined (Compliance Advocate + Non-Compliance Examiner, disputes adjudicated).")
         fmt += pkg.format_decisions
         fmt += [f"Package rule applied: {r}" for r in plan.package_rules.other_rules[:6]]
         if ex_paths:
@@ -529,7 +575,7 @@ async def run_job(job_id: str, rerun_notes: str = "") -> None:
             "cost_by_stage": tracker.by_stage, "models": sorted(tracker.models_used), "qa": qa_res.model_dump(),
             "qa_lines": qa_lines, "warnings": pkg.warnings, "naming_source": nsrc, "toc": pkg.toc,
             "deviation_page": pkg.deviation_page, "extra_hr": extra_hr, "mock": mock_mode(),
-            "budget_hit": budget_hit, "src_to_out": pkg.src_to_out,
+            "budget_hit": budget_hit, "src_to_out": pkg.src_to_out, "review_mode": mode,
         }
         _save(work / "result.json", result)
         db.update_job(job_id, status="done", stage="done", result=result, cost=round(tracker.spent_usd, 4))

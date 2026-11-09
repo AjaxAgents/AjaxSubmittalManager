@@ -19,7 +19,7 @@ export function SettingsModal({ onClose, onSaved }: { onClose: () => void; onSav
     setBusy(true);
     try {
       const out = await api.saveSettings({ api_key: key || undefined, mock: s.mock, stage_models: s.stages, usd_cap: s.usd_cap,
-        scope_mode: s.scope_mode, page_budget: s.page_budget, web_search: s.web_search } as any);
+        scope_mode: s.scope_mode, page_budget: s.page_budget, web_search: s.web_search, review_mode: s.review_mode } as any);
       toast("Settings saved", "ok"); onSaved(out); onClose();
     } catch (e: any) { toast(e.message, "bad"); } finally { setBusy(false); }
   };
@@ -38,6 +38,11 @@ export function SettingsModal({ onClose, onSaved }: { onClose: () => void; onSav
           <div className="grid-2">
             <Field label="Job budget cap (USD)" hint="At 80% Opus stages fall back to Sonnet; at 100% the job stops."><input className="input" type="number" min={1} step={1} value={s.usd_cap} onChange={(e) => setS({ ...s, usd_cap: +e.target.value })} /></Field>
             <Field label="Library page budget per job"><input className="input" type="number" min={10} value={s.page_budget} onChange={(e) => setS({ ...s, page_budget: +e.target.value })} /></Field>
+            <Field label="Default review mode" hint="Can be switched per run next to the Run button.">
+              <select className="input" value={s.review_mode || "cross"} onChange={(e) => setS({ ...s, review_mode: e.target.value })}>
+                <option value="cross">Cross-examined (2 Opus agents)</option><option value="single">Single agent (1 Opus pass)</option>
+              </select>
+            </Field>
             <Field label="Default scope mode">
               <select className="input" value={s.scope_mode} onChange={(e) => setS({ ...s, scope_mode: e.target.value })}><option value="flexible">Flexible</option><option value="strict">Strict</option></select>
             </Field>
