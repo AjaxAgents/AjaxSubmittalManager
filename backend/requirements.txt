@@ -1,0 +1,9 @@
+# Ajax Submittal Manager backend (Python 3.11+)
+anthropic>=2.0
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+pydantic>=2.7
+pymupdf>=1.24.10        # AGPL-3.0 / commercial dual license - see README "Licensing"
+pyyaml>=6.0
+python-dotenv>=1.0

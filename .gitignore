@@ -1,0 +1,16 @@
+.env
+data/*
+!data/.gitkeep
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+node_modules/
+frontend/node_modules/
+*.egg-info/
+eval/cases/*
+!eval/cases/README.md
+.DS_Store
+Thumbs.db
+scratch/

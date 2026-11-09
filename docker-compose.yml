@@ -1,0 +1,10 @@
+services:
+  asm:
+    build: .
+    ports:
+      - "127.0.0.1:8765:8765"   # localhost only - v1 has no login
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+      - ./prompts:/app/prompts

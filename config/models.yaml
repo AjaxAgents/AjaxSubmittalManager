@@ -1,0 +1,36 @@
+# Model per pipeline stage. Swap freely; pricing lives in pricing.yaml.
+# Stage keys must match backend/asm/agents/stages.py.
+stages:
+  catalog:     { model: claude-haiku-5-5,  max_tokens: 2000 }   # library summaries / sheet title blocks
+  scope:       { model: claude-haiku-5-5,  max_tokens: 3000 }   # reference-scope suggestion (catalog index only)
+  intake:      { model: claude-haiku-5-5,  max_tokens: 8000 }
+  planner:     { model: claude-sonnet-5-5, max_tokens: 24000 }
+  advocate:    { model: claude-opus-5-5,   max_tokens: 32000 }
+  examiner:    { model: claude-opus-5-5,   max_tokens: 32000 }
+  adjudicator: { model: claude-opus-5-5,   max_tokens: 24000 }
+  qa:          { model: claude-sonnet-5-5, max_tokens: 6000 }
+
+# When a job passes this share of its dollar budget, remaining stages that
+# use the "expensive" model are downgraded to the fallback model.
+budget_downgrade:
+  at_fraction: 0.8
+  from: claude-opus-5-5
+  to: claude-sonnet-5-5
+
+# Optional extra request parameters merged into every call for a stage
+# (e.g. thinking/effort settings). Leave empty unless you know you need them.
+extra_params: {}
+
+# Public web lookups for reviewers (manufacturer data, listings, standards).
+# Uses Anthropic's server-side web search tool; billed per search.
+web_search:
+  enabled: false
+  tool_type: web_search_20250305
+  max_uses: 3
+  stages: [advocate, examiner, adjudicator]
+
+limits:
+  max_turns_per_stage: 30          # tool-loop turns before the stage is force-closed
+  submittal_inline_max_pages: 75   # above this, reviewers get page text + pull page images on demand (keeps context headroom)
+  request_timeout_s: 900
+  max_parallel_catalog_calls: 6
