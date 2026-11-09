@@ -339,6 +339,17 @@ async def _ai_summaries(project_id: str, items: list[dict[str, Any]], doc_by_fil
 
 # ----------------------------------------------------------------------------- main entry
 
+CANCELLED: set[str] = set()   # file ids the user asked to stop; checked at every progress step
+
+
+class IngestCancelled(Exception):
+    pass
+
+
+def request_cancel(file_id: str) -> None:
+    CANCELLED.add(file_id)
+
+
 def ingest_file(project_id: str, file_id: str, on_progress: Callable[[float, str], None] | None = None,
                 use_ai: bool = True) -> dict[str, Any]:
     """Parse + catalog one library file. Safe to call again (replaces this file's catalog rows)."""
@@ -347,14 +358,16 @@ def ingest_file(project_id: str, file_id: str, on_progress: Callable[[float, str
         raise ValueError("library file not found")
 
     def prog(p: float, msg: str) -> None:
+        if file_id in CANCELLED or not db.get_library_file(file_id):
+            raise IngestCancelled()
         db.update_library_file(file_id, progress=round(p, 3), status="processing", notes=msg)
         if on_progress:
             on_progress(p, msg)
 
     path = Path(f["path"])
-    prog(0.02, "Opening")
     doc = pymupdf.open(path)
     try:
+        prog(0.02, "Opening")
         # OCR scanned files once, then re-open the OCR'd copy
         no_text = sum(1 for i in range(min(doc.page_count, 30)) if len(doc[i].get_text("text").strip()) < 20)
         if doc.page_count and no_text / min(doc.page_count, 30) > 0.25 and settings_cfg().get("library", {}).get("ocr_if_no_text", True):
@@ -387,12 +400,14 @@ def ingest_file(project_id: str, file_id: str, on_progress: Callable[[float, str
             items += _document_items(project_id, file_id, f["filename"], doc)
 
         if use_ai and ai_enabled(project_id) and items:
-            prog(0.35, "Summarizing with Claude (Haiku)")
+            prog(0.35, "Writing summaries")
             asyncio.run(_ai_summaries(project_id, items, {file_id: doc},
-                                      lambda p: prog(0.35 + 0.55 * p, "Summarizing with Claude (Haiku)")))
+                                      lambda p: prog(0.35 + 0.55 * p, "Writing summaries")))
         for it in items:
             it.setdefault("token_est", est_tokens(it.get("text", "")))
         prog(0.92, "Indexing")
+        if file_id in CANCELLED or not db.get_library_file(file_id):
+            raise IngestCancelled()
         db.upsert_catalog(items)
         relink_amendments(project_id)
         n_sections = sum(1 for i in items if i["kind"] == "spec_section")
@@ -401,6 +416,13 @@ def ingest_file(project_id: str, file_id: str, on_progress: Callable[[float, str
                 f"{n_sheets} sheets" if kind == "drawing" else f"{len(items)} item(s)")
         db.update_library_file(file_id, status="ready", progress=1.0, notes=note, kind=kind)
         return {"kind": kind, "items": len(items), "note": note}
+    except IngestCancelled:
+        CANCELLED.discard(file_id)
+        if db.get_library_file(file_id):
+            db.delete_catalog_for_file(project_id, file_id)
+            db.update_library_file(file_id, status="uploaded", progress=0, error="", notes="")
+            relink_amendments(project_id)
+        return {"cancelled": True}
     except Exception as exc:
         log.exception("ingest failed")
         db.update_library_file(file_id, status="error", error=str(exc)[:500])

@@ -66,3 +66,9 @@ re-runs and packaging are shared; `single_verdicts` sends any unverified or low-
 - Quality templates, Division 01 and cover templates are library files (`kind` example/div01/cover) picked per
   review through `params.library_refs`. A cover template is inserted as page 1 and filled by
   `cover_template.fill`; the generated cover follows only if requested.
+- Processing can be stopped (`/library/cancel`): queued files go back to *Not processed*; a running ingest
+  checks `ingest.CANCELLED` at every progress step, removes its partial catalog rows and resets the file.
+  Deleting a file that is processing cancels it first. Duplicate detection is per library section, so the same
+  PDF can be both a spec and the Division 01 procedures.
+- Catalog: filters (type, division/discipline, amended), sort, and a page viewer (`components/PageViewer.tsx`,
+  server-rendered pages with zoom and a full-screen pop-up). `/catalog/item.pdf` extracts an item's pages as a PDF.

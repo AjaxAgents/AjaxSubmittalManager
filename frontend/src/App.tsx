@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { api, Job, LibraryFile, Project, Settings, Sub, TreeNode, User } from "./api";
 import { ProjectModal, SettingsModal } from "./components/Modals";
+import { ProjectSwitcher } from "./components/Pickers";
 import { Icon, ToastProvider, useToast } from "./components/ui";
 import { LibTab, Library } from "./pages/Library";
 import { Login, Logo } from "./pages/Login";
@@ -97,15 +98,7 @@ function Shell({ user, onSignOut }: { user: User; onSignOut: () => void }) {
     <div className="app">
       <header className="topbar">
         <button className="brand" onClick={() => go(null)} aria-label="All projects"><Logo size={28} /><span className="wordmark">AJAX</span><span className="product">Submittal Manager</span></button>
-        {projects && projects.length > 0 && (
-          <div className="proj-pill">
-            <Icon name="building" size={16} />
-            <select aria-label="Project" value={pid || ""} onChange={(e) => e.target.value ? go(e.target.value) : go(null)}>
-              <option value="">All projects</option>
-              {projects.map((p) => <option key={p.id} value={p.id}>{p.number ? `${p.number}  ` : ""}{p.name}</option>)}
-            </select>
-          </div>
-        )}
+        {projects && projects.length > 0 && <ProjectSwitcher projects={projects} current={pid} onPick={(id) => go(id)} />}
         <span className="grow" />
         <button className="top-btn" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
           <Icon name={theme === "dark" ? "sun" : "moon"} size={17} /></button>

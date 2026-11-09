@@ -89,6 +89,7 @@ export const api = {
     fetch(`/api/projects/${pid}/library`, { method: "POST", credentials: "same-origin", body: form(files, { kind, division }) })
       .then(j<{ files: LibraryFile[]; errors: { filename: string; error: string }[] }>),
   process: (pid: string, file_ids: string[], use_ai: boolean) => fetch(`/api/projects/${pid}/library/process`, json("POST", { file_ids, use_ai })).then(j<{ queued: number }>),
+  cancelProcessing: (pid: string, file_ids: string[] = []) => fetch(`/api/projects/${pid}/library/cancel`, json("POST", { file_ids })).then(j<{ cancelled: number }>),
   bulk: (pid: string, file_ids: string[], action: string, value = "") => fetch(`/api/projects/${pid}/library/bulk`, json("POST", { file_ids, action, value })).then(j<{ updated: number }>),
   patchFile: (fid: string, b: { kind?: string; division?: string }) => fetch(`/api/library/${fid}`, json("PATCH", b)).then(j<LibraryFile>),
   deleteFile: (fid: string) => fetch(`/api/library/${fid}`, json("DELETE")).then(j<{ ok: boolean }>),
@@ -131,6 +132,8 @@ export const DIVISION_NAMES: Record<string, string> = {
   "21": "Fire Suppression", "22": "Plumbing", "23": "HVAC", "25": "Integrated Automation", "26": "Electrical", "27": "Communications",
   "28": "Electronic Safety and Security", "31": "Earthwork", "32": "Exterior Improvements", "33": "Utilities",
 };
+/** Division codes in MasterFormat order (00, 01, ... 33). Object.keys would put "10".."33" before "00".."09". */
+export const DIVISION_CODES = Object.keys(DIVISION_NAMES).sort();
 export const STATUS_LABEL: Record<string, { label: string; tone: "ok" | "bad" | "warn" | "info" | "neutral" }> = {
   draft: { label: "Draft", tone: "neutral" }, in_review: { label: "In review", tone: "info" }, clean: { label: "No exceptions", tone: "ok" },
   exceptions: { label: "Exceptions", tone: "bad" }, needs_review: { label: "Needs review", tone: "warn" }, error: { label: "Run failed", tone: "bad" },

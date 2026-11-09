@@ -233,10 +233,13 @@ def get_library_file(fid: str) -> dict | None:
         return row(c.execute("SELECT * FROM library_files WHERE id=?", (fid,)).fetchone())
 
 
-def find_library_file_by_hash(project_id: str, sha: str) -> dict | None:
+def find_library_file_by_hash(project_id: str, sha: str, kinds: list[str] | None = None) -> dict | None:
+    q, args = "SELECT * FROM library_files WHERE project_id=? AND sha256=? AND superseded=0", [project_id, sha]
+    if kinds:
+        q += f" AND kind IN ({','.join('?' * len(kinds))})"
+        args += kinds
     with conn() as c:
-        return row(c.execute("SELECT * FROM library_files WHERE project_id=? AND sha256=? AND superseded=0",
-                             (project_id, sha)).fetchone())
+        return row(c.execute(q, args).fetchone())
 
 
 def list_library_files(project_id: str) -> list[dict]:

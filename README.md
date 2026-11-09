@@ -55,13 +55,15 @@ searchable by division, with status, subcontractor and revision), **New Submitta
    - *Project information* - upload the project manual, drawings, addenda/ASIs/RFIs. Pick the type
      (Spec / Drawings / Amendment / Document, or Auto) and division **before** uploading; files are stored
      but not processed until you press **Process**. Select rows to bulk-change type or division, re-process,
-     or delete. Processing splits specs by section > part > article and drawings by sheet, tags amendments,
+     or delete; **Stop processing** puts anything queued or running back to *Not processed*. Processing splits specs by section > part > article and drawings by sheet, tags amendments,
      and builds the catalog.
    - *Quality templates* (example submittals), *Division 01* procedures, and *Cover page* templates. Mark the
      ones to use by default. For a cover template, **Map fields** links each form field or text box to
      submittal data; you can also type `{ProjectName}`, `{SubmittalNo}`, `{SpecSection}`, `{Subcontractor}`
      etc. anywhere on the template. Covers are filled by fixed rules, not by the model.
    - *Divisions & subcontractors* - preload the divisions in play and who holds each scope.
+   - *Catalog* - filter by specs, drawings, amendments or documents (and by division or discipline), sort, and click
+     an item to read its pages beside the list or full screen.
 3. **New Submittal Review**: drop the submittal PDF, then **Auto-fill details** to read the spec section,
    type, subcontractor and title from its first pages. The subcontractor, spec section, submittal number and
    revision autocomplete from the project. Under *Reference materials*, the project-information scope is
