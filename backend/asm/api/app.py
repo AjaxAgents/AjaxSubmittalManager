@@ -23,8 +23,8 @@ from pydantic import BaseModel
 
 from .. import __version__, db, pipeline
 from ..agents.llm import price_for
-from ..config import (FRONTEND_DIST, api_key, data_dir, mock_mode, models_cfg, reload_all, save_api_key, save_env,
-                      save_overrides, settings_cfg, stage_cfg)
+from ..config import (ENV_PATH, FRONTEND_DIST, api_key, data_dir, mock_mode, models_cfg, outputs_dir, reload_all, save_api_key,
+                      save_env, save_overrides, settings_cfg, stage_cfg)
 from ..library import catalog as cat
 from ..library.ingest import ingest_file, norm_section
 from ..outputs import naming
@@ -129,7 +129,7 @@ def get_settings() -> dict:
         "stages": {k: v.get("model") for k, v in (m.get("stages") or {}).items()},
         "usd_cap": s.get("budget", {}).get("job_usd_cap"), "scope_mode": s.get("scope", {}).get("default_mode"),
         "page_budget": s.get("scope", {}).get("page_budget"), "web_search": bool((m.get("web_search") or {}).get("enabled")),
-        "output_dir": str(data_dir() / "outputs"),
+        "output_dir": str(outputs_dir()), "key_location": str(ENV_PATH),
     }
 
 
@@ -398,23 +398,10 @@ def estimate(pid: str, body: EstimateIn) -> dict:
         pages = len(it["pages"]) if it.get("pages") else cat.item_pages(c)
         lib_pages += pages
         lib_tokens += int(c.get("token_est") or pages * 700) if c["kind"] != "drawing_sheet" else 1600 * pages
-    S = sub_pages * 2200
-    L = lib_tokens
-    I, R = 4000, 6000
-
-    def cost(stage: str, inp: int, out: int, cached_read: int = 0, cache_write: int = 0) -> float:
-        p = price_for(stage_cfg(stage)["model"])
-        return (inp * p["input"] + out * p["output"] + cached_read * p["cache_read"] + cache_write * p["cache_write"]) / 1e6
-
-    est = (cost("intake", S + 2000, 4000)
-           + cost("planner", L + I + 6000, 9000)
-           + cost("advocate", int(L * 0.5), 14000, cached_read=4 * (S + I + R), cache_write=S + I + R)
-           + cost("examiner", int(L * 0.5), 14000, cached_read=5 * (S + I + R))
-           + cost("adjudicator", 4000, 6000, cached_read=S, cache_write=0)
-           + cost("qa", 12000, 1500))
-    tokens = S * 10 + L * 2 + 60000
-    return {"submittal_pages": sub_pages, "library_pages": lib_pages, "est_input_tokens": tokens,
-            "est_cost_low": round(est * 0.7, 2), "est_cost_high": round(est * 1.6, 2),
+    from ..costing import estimate as cost_estimate
+    e = cost_estimate(sub_pages, lib_tokens)
+    return {"submittal_pages": sub_pages, "library_pages": lib_pages, "est_input_tokens": e["input_tokens"],
+            "est_cost_low": e["low"], "est_cost_high": e["high"], "est_cost_mid": e["mid"], "by_stage": e["by_stage"],
             "usd_cap": settings_cfg().get("budget", {}).get("job_usd_cap"), "mock": mock_mode()}
 
 

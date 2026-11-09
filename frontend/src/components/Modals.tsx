@@ -28,7 +28,7 @@ export function SettingsModal({ onClose, onSaved }: { onClose: () => void; onSav
       <div className="settings-grid">
         <section>
           <h4><Icon name="key" size={16} /> Anthropic API key</h4>
-          <p className="muted small">Stored only in the backend <code>.env</code> on this computer. Never sent to the browser.</p>
+          <p className="muted small">Stored only on this computer{s.key_location ? <> (<code>{s.key_location}</code>)</> : null}, outside OneDrive. Never sent to the browser or logged.</p>
           <Field label={s.api_key_set ? `Key set (…${s.api_key_hint}). Paste a new one to replace it.` : "No key set"}>
             <input className="input mono" type="password" placeholder="sk-ant-…" value={key} onChange={(e) => setKey(e.target.value)} autoComplete="off" />
           </Field>
@@ -45,7 +45,7 @@ export function SettingsModal({ onClose, onSaved }: { onClose: () => void; onSav
               <label className="toggle"><input type="checkbox" checked={s.web_search} onChange={(e) => setS({ ...s, web_search: e.target.checked })} /><span className="toggle-ui" /> Enabled for reviewers</label>
             </Field>
           </div>
-          <p className="muted small">Outputs are also copied to <code>{s.output_dir}</code></p>
+          <p className="muted small">Finished PDF + TXT are copied to <code>{s.output_dir}</code></p>
         </section>
         <section>
           <h4><Icon name="layers" size={16} /> Model per stage</h4>

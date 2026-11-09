@@ -22,7 +22,7 @@ from . import db
 from .agents import stages
 from .agents.adjudicate import rule_verdicts, verify_findings
 from .agents.llm import BudgetExceeded, Cancelled, CostTracker
-from .config import data_dir, markup_cfg, mock_mode, settings_cfg
+from .config import data_dir, markup_cfg, mock_mode, outputs_dir, settings_cfg
 from .library.catalog import section_lookup
 from .library.ingest import norm_section
 from .library.tools import ScopeGuard
@@ -278,10 +278,10 @@ async def run_job(job_id: str, rerun_notes: str = "") -> None:
 
         # ---------------------------------------------------------------- intake / planner (or reuse)
         if parent:
-            smap = SubmittalMap.model_validate_json((work / "intake.json").read_text())
-            plan = PlannerResult.model_validate_json((work / "planner.json").read_text())
-            adv = ReviewResult.model_validate_json((work / "advocate.json").read_text())
-            exa = ReviewResult.model_validate_json((work / "examiner.json").read_text())
+            smap = SubmittalMap.model_validate_json((work / "intake.json").read_text(encoding="utf-8"))
+            plan = PlannerResult.model_validate_json((work / "planner.json").read_text(encoding="utf-8"))
+            adv = ReviewResult.model_validate_json((work / "advocate.json").read_text(encoding="utf-8"))
+            exa = ReviewResult.model_validate_json((work / "examiner.json").read_text(encoding="utf-8"))
             for k in ("intake", "planner", "advocate", "examiner"):
                 step.skip(k, "reused from previous run")
         else:
@@ -334,7 +334,7 @@ async def run_job(job_id: str, rerun_notes: str = "") -> None:
         verdicts, disputes = rule_verdicts(plan, adv, exa)
         prev_ids: dict[str, str] = {}
         if parent and (work / "verdicts.json").exists():
-            prev = json.loads((work / "verdicts.json").read_text())
+            prev = json.loads((work / "verdicts.json").read_text(encoding="utf-8"))
             prev_ids = {v["requirement_id"]: v.get("txt_id", "") for v in prev}
             if rerun_notes:  # re-open every non-compliant / human-review item for the adjudicator
                 reopen = {v["requirement_id"] for v in prev if v["result"] in ("non_compliant", "human_review")}
@@ -438,7 +438,7 @@ async def run_job(job_id: str, rerun_notes: str = "") -> None:
                                               [p.name for p in ex_paths])
         toks = naming.tokens(params, project)
         base = naming.render(pattern, toks) or f"{params['spec_section']} Submittal"
-        sub_no = naming.submittal_number(params)
+        sub_no = naming.submittal_number(params, project)
         out_dir = jd / "outputs"
         if out_dir.exists():
             shutil.rmtree(out_dir)
@@ -503,11 +503,12 @@ async def run_job(job_id: str, rerun_notes: str = "") -> None:
 
         draft = make_txt(det_qa)
         qa_res = QAResult(passed=True, issues=[])
-        try:
-            pages_for_qa = [0] + ([pkg.deviation_page - 1] if pkg.deviation_page else []) + [p for p in pkg.marked_pages][:6]
-            qa_res = await stages.run_qa(ctx, pkg.path, pages_for_qa, pdf_path.name, plan.package_rules, draft)
-        except (BudgetExceeded, Exception) as exc:  # QA must never sink a finished package
-            ev.emit("log", {"msg": f"QA check skipped: {exc}", "level": "warn"})
+        if bool((settings_cfg().get("qa") or {}).get("llm_check", False)):
+            try:
+                pages_for_qa = [0] + ([pkg.deviation_page - 1] if pkg.deviation_page else []) + list(pkg.marked_pages)[:6]
+                qa_res = await stages.run_qa(ctx, pkg.path, pages_for_qa, pdf_path.name, plan.package_rules, draft)
+            except (BudgetExceeded, Exception) as exc:  # QA must never sink a finished package
+                ev.emit("log", {"msg": f"QA check skipped: {exc}", "level": "warn"})
         qa_lines = det_qa + [f"[QA {i.severity.upper()}] {i.where}: {i.issue}" for i in qa_res.issues]
         txt = make_txt(qa_lines)
         txt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -515,7 +516,7 @@ async def run_job(job_id: str, rerun_notes: str = "") -> None:
         step.done("qa", "passed" if qa_res.passed and not any("FIX" in q for q in qa_lines) else f"{len(qa_lines)} note(s)")
 
         # ---------------------------------------------------------------- publish
-        proj_out = data_dir() / "outputs" / _safe(project.get("name") or project["id"])
+        proj_out = outputs_dir() / _safe(project.get("name") or project["id"])
         proj_out.mkdir(parents=True, exist_ok=True)
         shutil.copy2(pdf_path, proj_out / pdf_path.name)
         shutil.copy2(txt_path, proj_out / txt_path.name)

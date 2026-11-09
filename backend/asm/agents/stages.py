@@ -226,8 +226,18 @@ async def run_adjudicator(ctx: JobContext, plan: PlannerResult, disputes: list[d
     content = [text_block(ctx.header_text())]
     if notes:
         content.append(text_block(f"REVIEWER RE-RUN NOTES (high priority, from the human reviewer):\n{notes}"))
-    content += [ctx.submittal_block(cache=True), text_block("\n".join(body)),
-                text_block("Decide each disputed requirement and call submit_result.")]
+    # Only the pages the disputes cite (cheap); the page viewer tool can fetch anything else.
+    pages = sorted({p for d in disputes for p in (d.get("pages") or []) if 1 <= p <= ctx.submittal_pages})[:20]
+    if pages:
+        from ..pdf.util import slice_pdf_bytes
+        excerpt = base64.b64encode(slice_pdf_bytes(ctx.submittal_path, [p - 1 for p in pages])).decode()
+        mapping = ", ".join(f"excerpt p.{i + 1} = submittal p.{p}" for i, p in enumerate(pages))
+        content += [text_block(f"SUBMITTAL EXCERPT (cited pages only). Always cite ORIGINAL submittal page numbers: {mapping}. "
+                               f"The full submittal has {ctx.submittal_pages} pages; use view_submittal_pages for others."),
+                    pdf_block(excerpt, title="Submittal excerpt (disputed pages)", cache=True)]
+    else:
+        content.append(ctx.submittal_block(cache=True))
+    content += [text_block("\n".join(body)), text_block("Decide each disputed requirement and call submit_result.")]
     run = await run_agent(stage="adjudicator", tracker=ctx.tracker, system=prompt("adjudicator"),
                           user_content=content, result_model=AdjudicatorResult, tools=tools,
                           on_event=ctx.on_tool, web_search=True)

@@ -18,19 +18,33 @@ them to a human. A project **catalog** keeps every run to just the spec sections
 
 ---
 
-## Quick start (Windows)
+## Quick start (Windows - no install)
 
-1. Install **Python 3.11+** from python.org (tick *Add python.exe to PATH*).
-2. Download this repo (green **Code** button > *Download ZIP*, or `git clone`), and unzip it.
-3. Double-click **`start.bat`**. The first run installs dependencies (a few minutes), then the app opens at
-   <http://localhost:8765>.
-4. Click the status pill (top right) > **Settings** and paste your **Anthropic API key**
-   (from <https://console.anthropic.com>). It is saved only in the local `.env` file.
+1. Download **`AjaxSubmittalManager.exe`** from the repo's
+   [Releases](https://github.com/AjaxAgents/AjaxSubmittalManager/releases/latest) page and put it in any folder.
+2. Double-click it. A small control window opens and the app opens in your browser. Keep the control window
+   open while you work; **Quit** stops the app.
+3. Settings opens automatically the first time: paste your **Anthropic API key** (from
+   <https://console.anthropic.com>) and save.
 
-No API key yet? Turn on **Offline demo mode** in Settings and run `python scripts/make_demo_project.py data/demo`
-to generate a fictional project to click through. Demo mode uses simple heuristics, not Claude.
+Where things live:
+- Finished PDFs/TXTs: an **`Outputs`** folder next to the exe (changeable in `config/settings.yaml` > `output.folder`).
+- API key, database, project libraries, run history: `%LOCALAPPDATA%\AjaxSubmittalManager` - kept out of
+  OneDrive on purpose (the key should not sync, and the database does not like synced folders).
+- Optional overrides: put edited `config/*.yaml` or `prompts/*.md` files in `config\` / `prompts\` folders next
+  to the exe; anything not overridden uses the built-in defaults.
 
-macOS/Linux: `./start.sh`. Docker: `docker compose up --build`.
+If IT policy blocks single-file executables, use **`AjaxSubmittalManager-folder.zip`** from the same release
+(unzip, run `AjaxSubmittalManager.exe` inside). The exe is unsigned, so Windows SmartScreen may ask you to
+click *More info > Run anyway* the first time; ask IT to allow-list it if needed.
+
+No API key yet? Turn on **Offline demo mode** in Settings to click through with heuristic stand-ins (not a real review).
+
+### Running from source (developers)
+Python 3.11+: `start.bat` (Windows) or `./start.sh`, or `make backend`. Docker: `docker compose up --build`.
+Build the exe yourself on Windows: `pip install -r backend/requirements.txt pyinstaller` then
+`pyinstaller packaging/AjaxSubmittalManager.spec --noconfirm` (CI does this on every merge to `main` and
+publishes it to Releases).
 
 ## Using it
 
@@ -49,15 +63,26 @@ macOS/Linux: `./start.sh`. Docker: `docker compose up --build`.
    requirements matrix, read the Human Review list and TXT, and download both files.
 7. **Re-run** with notes ("N-02 accepted per RFI 112") to redo only adjudication and assembly - fast and cheap.
 
-Outputs are saved in `data/jobs/<run>/outputs/` and copied to `data/outputs/<project>/`.
+Outputs are copied to `Outputs\<project>\` next to the exe (each run's full audit trail stays in the data folder).
 
 ## Cost control
 
-Haiku for cataloguing/intake, Sonnet for planning/QA, Opus for the two reviewers and the Adjudicator
-(`config/models.yaml`). The two reviewers share a cached prompt prefix, so the second runs mostly on cache
-reads. Every job has a dollar cap (Settings): at 80% Opus stages fall back to Sonnet; at 100% the job stops
-and unreviewed items are listed under Human Review. Every call's tokens and cost are logged and shown in the
-results. Verify prices in `config/pricing.yaml` against Anthropic's pricing page.
+Only the two cross-examining reviewers run on Opus; Intake and library cataloguing use Haiku, the Planner and
+Adjudicator use Sonnet, and packaging/QA are plain code (`config/models.yaml`). The reviewers share a cached
+prompt prefix, so the second one reads the submittal at 5% of the input price. The Adjudicator sees only
+disputed items and their pages.
+
+Typical estimates (verify against the *Sources & cost* tab after real runs):
+
+| Submittal | Estimated cost |
+| --- | --- |
+| 10-page product data | ~$0.70-1.30 |
+| 40-page product data | ~$1.20-2.50 |
+| 75-page package | ~$2.00-3.90 |
+
+Every job has a dollar cap (default $6, Settings): at 80% Opus stages fall back to Sonnet; at 100% the job
+stops and unreviewed items go to Human Review. The pre-run estimate is shown next to the Run button.
+Prices live in `config/pricing.yaml`.
 
 ## Bluebeam compatibility
 

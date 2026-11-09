@@ -37,7 +37,7 @@ function Shell() {
 
   useEffect(() => {
     api.health().then(setHealth).catch(() => toast("Cannot reach the ASM backend. Is it running?", "bad"));
-    api.settings().then(setSettings).catch(() => {});
+    api.settings().then((s) => { setSettings(s); if (!s.api_key_set && !s.mock) setShowSettings(true); }).catch(() => {});
     loadProjects().catch(() => {});
   }, []);
   useEffect(() => { if (pid) store.set("asm.project", pid); }, [pid]);
