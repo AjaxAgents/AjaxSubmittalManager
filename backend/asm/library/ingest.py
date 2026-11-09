@@ -111,6 +111,9 @@ def classify(path: Path, filename: str) -> str:
     name = filename.lower()
     if re.search(r"addend|\basi\b|asi[-_ ]?\d|bulletin|\brfi\b|rfi[-_ ]?\d|\bccd\b|change directive|\bpr[-_ ]?\d", name):
         return "amendment"
+    # individually issued spec sections, e.g. "31-20-00-Earth-Moving_Rev_1.pdf" or "087100 Door Hardware.pdf"
+    if re.match(r"^\d{2}[-_ .]?\d{2}[-_ .]?\d{2}(?:[-_ .]\d{2})?[-_ ]+[a-z]", name):
+        return "spec"
     with pymupdf.open(path) as doc:
         n = doc.page_count
         sample = list(range(min(n, 40)))
@@ -274,8 +277,10 @@ def detect_sheet(page: pymupdf.Page) -> dict[str, Any]:
 
 # ----------------------------------------------------------------------------- AI summaries (optional)
 
-def ai_enabled() -> bool:
-    return bool(api_key()) and not mock_mode() and bool(settings_cfg().get("library", {}).get("summarize_with_ai", True))
+def ai_enabled(project_id: str | None = None) -> bool:
+    from ..auth import api_key_for_project
+    return (bool(api_key_for_project(project_id)) and not mock_mode()
+            and bool(settings_cfg().get("library", {}).get("summarize_with_ai", True)))
 
 
 async def _ai_summaries(project_id: str, items: list[dict[str, Any]], doc_by_file: dict[str, pymupdf.Document],
@@ -334,7 +339,8 @@ async def _ai_summaries(project_id: str, items: list[dict[str, Any]], doc_by_fil
 
 # ----------------------------------------------------------------------------- main entry
 
-def ingest_file(project_id: str, file_id: str, on_progress: Callable[[float, str], None] | None = None) -> dict[str, Any]:
+def ingest_file(project_id: str, file_id: str, on_progress: Callable[[float, str], None] | None = None,
+                use_ai: bool = True) -> dict[str, Any]:
     """Parse + catalog one library file. Safe to call again (replaces this file's catalog rows)."""
     f = db.get_library_file(file_id)
     if not f:
@@ -372,7 +378,7 @@ def ingest_file(project_id: str, file_id: str, on_progress: Callable[[float, str
         prog(0.15, f"Splitting ({kind})")
 
         if kind == "spec":
-            items += _spec_items(project_id, file_id, doc)
+            items += _spec_items(project_id, file_id, doc, f["filename"])
         elif kind == "drawing":
             items += _drawing_items(project_id, file_id, doc)
         elif kind == "amendment":
@@ -380,7 +386,7 @@ def ingest_file(project_id: str, file_id: str, on_progress: Callable[[float, str
         else:
             items += _document_items(project_id, file_id, f["filename"], doc)
 
-        if ai_enabled() and items:
+        if use_ai and ai_enabled(project_id) and items:
             prog(0.35, "Summarizing with Claude (Haiku)")
             asyncio.run(_ai_summaries(project_id, items, {file_id: doc},
                                       lambda p: prog(0.35 + 0.55 * p, "Summarizing with Claude (Haiku)")))
@@ -403,9 +409,27 @@ def ingest_file(project_id: str, file_id: str, on_progress: Callable[[float, str
         doc.close()
 
 
-def _spec_items(project_id: str, file_id: str, doc: pymupdf.Document) -> list[dict[str, Any]]:
+def _spec_from_filename(doc: pymupdf.Document, filename: str) -> list[dict[str, Any]]:
+    """Fallback when a single-section file has no detectable SECTION header: number/title from the file name."""
+    m = re.match(r"^(\d{2})[-_ .]?(\d{2})[-_ .]?(\d{2})(?:[-_ .](\d{2}))?[-_ ]+(.+?)(?:[-_ ]+rev[-_ ]?\w+)?$",
+                 Path(filename).stem, re.I)
+    if not m:
+        return []
+    number = f"{m.group(1)} {m.group(2)} {m.group(3)}" + (f".{m.group(4)}" if m.group(4) else "")
+    title = re.sub(r"[-_]+", " ", m.group(5)).strip()
+    sec = {"number": number, "title": smart_title(title.upper()) if title.isupper() else title,
+           "page_start": 1, "page_end": doc.page_count,
+           "pages": [(i + 1, doc[i].get_text("text")) for i in range(doc.page_count)], "ended": True}
+    _split_parts_articles(sec)
+    return [sec]
+
+
+def _spec_items(project_id: str, file_id: str, doc: pymupdf.Document, filename: str = "") -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    for sec in split_spec(doc):
+    sections = split_spec(doc)
+    if not sections and filename:
+        sections = _spec_from_filename(doc, filename)
+    for sec in sections:
         text = _section_text(sec)
         sid = f"S:{sec['number']}"
         xrefs = sorted(set(norm_section(x) for x in RE_SECREF.findall(text)) - {sec["number"]})

@@ -2,7 +2,7 @@ import React, { useRef, useState } from "react";
 import { fmtBytes } from "../api";
 import { Badge, Icon } from "./ui";
 
-async function entriesToFiles(items: DataTransferItemList): Promise<File[]> {
+export async function entriesToFiles(items: DataTransferItemList): Promise<File[]> {
   const out: File[] = [];
   const walk = async (entry: any): Promise<void> => {
     if (!entry) return;

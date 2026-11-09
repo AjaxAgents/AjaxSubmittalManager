@@ -234,6 +234,8 @@ async def run_job(job_id: str, rerun_notes: str = "") -> None:
     jd = job_dir(job_id)
     work = jd / "work"
     db.update_job(job_id, status="running", error="")
+    if job.get("submittal_id"):
+        db.update_submittal(job["submittal_id"], latest_job_id=job_id, status="in_review")
     mode = params.get("review_mode") or (settings_cfg().get("review") or {}).get("default_mode", "cross")
     mode = "single" if mode == "single" else "cross"
     params["review_mode"] = mode
@@ -275,6 +277,18 @@ async def run_job(job_id: str, rerun_notes: str = "") -> None:
             page_texts = [pg.get_text("text") for pg in d]
         ex_paths = [Path(db.get_upload(u)["path"]) for u in params.get("uploads", {}).get("examples", []) if db.get_upload(u)]
         d1_paths = [Path(db.get_upload(u)["path"]) for u in params.get("uploads", {}).get("div01", []) if db.get_upload(u)]
+        refs = params.get("library_refs") or {}
+        for key, bucket in (("examples", ex_paths), ("div01", d1_paths)):
+            for fid in refs.get(key) or []:
+                lf = db.get_library_file(fid)
+                if lf and lf["project_id"] == project["id"]:
+                    bucket.append(Path(lf["path"]))
+        cover_tpl = None
+        if refs.get("cover"):
+            lf = db.get_library_file(refs["cover"])
+            if lf and lf["project_id"] == project["id"]:
+                cover_tpl = {"path": Path(lf["path"]), "mapping": (lf.get("meta") or {}).get("mapping") or {},
+                             "include_generated": bool(refs.get("include_generated_cover"))}
         scope = params.get("scope") or {"mode": "flexible", "items": [{"id": f"S:{params['spec_section']}", "locked": True}]}
         if not any(i["id"] == f"S:{params['spec_section']}" for i in scope.get("items", [])):
             scope.setdefault("items", []).insert(0, {"id": f"S:{params['spec_section']}", "locked": True,
@@ -514,7 +528,9 @@ async def run_job(job_id: str, rerun_notes: str = "") -> None:
             "submittal_type": params.get("submittal_type") or smap.submittal_type, "title": params.get("title"),
             "date_prepared": datetime.now().strftime(naming.naming_cfg().get("date_format", "%Y-%m-%d")),
             "required_date": params.get("required_date"), "supplier": params.get("supplier") or smap.supplier,
-            "manufacturers": smap.manufacturers,
+            "manufacturers": smap.manufacturers, "owner": project.get("owner"), "address": project.get("address"),
+            "seq": naming.parse_seq(params.get("submittal_no", ""), params["spec_section"])[0],
+            "type_abbr": naming.tokens(params, project).get("TypeAbbr", ""), "prepared_by": params.get("_prepared_by", ""),
         }
         meta = {"title": base, "author": project.get("contractor") or "Ajax Building Company",
                 "subject": f"{params['spec_section']} {params.get('spec_title', '')} - Submittal {sub_no}",
@@ -522,7 +538,7 @@ async def run_job(job_id: str, rerun_notes: str = "") -> None:
         pkg = await asyncio.to_thread(
             build_package, out_path=pdf_path, submittal_path=sub_path, smap=smap, cover_info=cover_info,
             markups=markups, deviations=deviations, spec_excerpt=excerpt,
-            include_toc=plan.package_rules.include_toc, metadata=meta)
+            include_toc=plan.package_rules.include_toc, metadata=meta, cover_template=cover_tpl)
         step.done("assemble", f"{pkg.page_count} pages, {len(pkg.applied)} markups")
 
         # ---------------------------------------------------------------- TXT + QA
@@ -579,21 +595,35 @@ async def run_job(job_id: str, rerun_notes: str = "") -> None:
         }
         _save(work / "result.json", result)
         db.update_job(job_id, status="done", stage="done", result=result, cost=round(tracker.spent_usd, 4))
+        if job.get("submittal_id"):
+            db.update_submittal(job["submittal_id"], latest_job_id=job_id, status=_register_status(counts, len(extra_hr)))
         ev.emit("job", {"status": "done", "pdf_name": pdf_path.name, "txt_name": txt_path.name,
                         "cost": round(tracker.spent_usd, 4), "counts": counts})
     except Cancelled:
         step.fail(current, "Cancelled")
         db.update_job(job_id, status="cancelled", error="Cancelled by user", cost=round(tracker.spent_usd, 4))
+        if job.get("submittal_id"):
+            db.update_submittal(job["submittal_id"], status="draft")
         ev.emit("job", {"status": "cancelled"})
     except Exception as exc:
         log.exception("job failed")
         step.fail(current, f"{type(exc).__name__}: {exc}")
         db.update_job(job_id, status="error", error=f"{type(exc).__name__}: {exc}", cost=round(tracker.spent_usd, 4))
+        if job.get("submittal_id"):
+            db.update_submittal(job["submittal_id"], status="error")
         ev.emit("job", {"status": "error", "error": f"{type(exc).__name__}: {exc}", "trace": traceback.format_exc()[-2000:]})
     finally:
         ev.done = True
         _TRACKERS.pop(job_id, None)
         _RUNNING.pop(job_id, None)
+
+
+def _register_status(counts: dict[str, int], extra_hr: int) -> str:
+    if counts.get("non_compliant"):
+        return "exceptions"
+    if counts.get("human_review") or extra_hr:
+        return "needs_review"
+    return "clean"
 
 
 def _safe(name: str) -> str:

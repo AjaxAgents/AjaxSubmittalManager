@@ -80,7 +80,7 @@ export function ScopeSelector({
         <div className="scope-pick" ref={panel}>
           <button className={`scope-trigger ${open ? "is-open" : ""}`} onClick={() => setOpen(!open)} aria-expanded={open}>
             <Icon name="search" size={16} />
-            <span>{items.length ? `${items.length} reference item${items.length > 1 ? "s" : ""} selected · ${total} pages` : "Choose spec sections, articles, sheets…"}</span>
+            <span>{items.length ? `Add or remove references (${items.length} selected, ${total} pages)` : "Search spec sections, articles, drawing sheets..."}</span>
             <Icon name="chevron" size={16} className={open ? "rot90" : ""} />
           </button>
           {open && (
@@ -148,7 +148,7 @@ export function ScopeSelector({
             </span>
           );
         })}
-        {source && <span className="scope-src">{source === "preset" ? "Saved scope for this section" : source === "ai" ? "Suggested by Claude (Haiku) from the catalog" : "Suggested from catalog cross-references"}{onReset && source === "preset" && <> · <button className="link-btn" onClick={onReset}>Reset to suggested</button></>}</span>}
+        {source && <span className="scope-src">{source === "preset" ? "Saved references for this section" : "Suggested from the project catalog"}{onReset && source === "preset" && <> · <button className="link-btn" onClick={onReset}>Reset to suggested</button></>}</span>}
       </div>
 
       {editingNode && editingItem && editingNode.page_start && (

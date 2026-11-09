@@ -70,22 +70,74 @@ def _pick_port(preferred: int) -> tuple[int, bool]:
     return preferred, False
 
 
+APP_USER_MODEL_ID = "AjaxBuildingCompany.SubmittalManager"
+
+
+def _windows_shell_setup() -> None:
+    """Crisp taskbar icon and text on Windows: own taskbar identity + per-monitor DPI awareness
+    (without it Windows bitmap-stretches the window and its icon on scaled displays)."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except Exception:
+        pass
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+
+def _icon_dir() -> str:
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        return base
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "packaging")
+
+
+def _set_window_icon(root) -> None:
+    import tkinter as tk
+
+    d = _icon_dir()
+    ico = os.path.join(d, "asm.ico")
+    try:
+        if sys.platform == "win32" and os.path.exists(ico):
+            root.iconbitmap(default=ico)
+    except Exception:
+        pass
+    try:
+        imgs = [tk.PhotoImage(file=os.path.join(d, f"asm-{s}.png")) for s in (256, 48, 32, 16)
+                if os.path.exists(os.path.join(d, f"asm-{s}.png"))]
+        if imgs:
+            root.iconphoto(True, *imgs)  # large + small: taskbar and title bar each pick a sharp size
+            root._asm_icons = imgs  # keep references alive
+    except Exception:
+        pass
+
+
 def _control_window(url: str, server, log_path: str) -> None:
     import tkinter as tk
     from tkinter import ttk
 
     from .config import outputs_dir
 
+    _windows_shell_setup()
     root = tk.Tk()
     root.title(APP_NAME)
-    root.geometry("380x210")
-    root.resizable(False, False)
-    root.configure(bg="#ffffff")
+    scale = 1.0
     try:
-        if getattr(sys, "_MEIPASS", None):
-            root.iconbitmap(os.path.join(sys._MEIPASS, "asm.ico"))  # type: ignore[attr-defined]
+        scale = max(1.0, root.winfo_fpixels("1i") / 96.0)
     except Exception:
         pass
+    root.geometry(f"{int(380 * scale)}x{int(210 * scale)}")
+    root.resizable(False, False)
+    root.configure(bg="#ffffff")
+    _set_window_icon(root)
     bar = tk.Frame(root, bg="#FF5200", height=5)
     bar.pack(fill="x")
     tk.Label(root, text="AJAX  Submittal Manager", font=("Segoe UI", 13, "bold"), bg="#ffffff", fg="#232729").pack(pady=(14, 2))
@@ -138,10 +190,12 @@ def main() -> None:
         ok = _wait_ready(port, 90)
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as r:
             ui_ok = b"<div id=\"root\">" in r.read()
+        icons = all(os.path.exists(os.path.join(_icon_dir(), f)) for f in ("asm.ico", "asm-256.png", "asm-32.png"))
         server.should_exit = True
         time.sleep(1)
-        print("SELFTEST", "OK" if ok and ui_ok else "FAIL", f"health={ok} ui={ui_ok}")
-        sys.exit(0 if ok and ui_ok else 1)
+        good = ok and ui_ok and icons
+        print("SELFTEST", "OK" if good else "FAIL", f"health={ok} ui={ui_ok} icons={icons}")
+        sys.exit(0 if good else 1)
 
     port, running = _pick_port(preferred)
     url = f"http://localhost:{port}"

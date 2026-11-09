@@ -13,6 +13,10 @@ datas = [
     (os.path.join(ROOT, "config"), "config"),
     (os.path.join(ROOT, "prompts"), "prompts"),
     (os.path.join(SPECPATH, "asm.ico"), "."),
+    (os.path.join(SPECPATH, "asm-16.png"), "."),
+    (os.path.join(SPECPATH, "asm-32.png"), "."),
+    (os.path.join(SPECPATH, "asm-48.png"), "."),
+    (os.path.join(SPECPATH, "asm-256.png"), "."),
 ] + collect_data_files("anthropic")
 
 a = Analysis(

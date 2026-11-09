@@ -1,15 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { api, Estimate, Job, LibraryFile, Project, ScopeItem, TreeNode, Upload } from "../api";
-import { Chip, DropZone } from "../components/DropZone";
+import { api, DIVISION_NAMES, Estimate, fmtBytes, Job, LibraryFile, Project, ScopeItem, Sub, TreeNode, Upload } from "../api";
+import { entriesToFiles } from "../components/DropZone";
+import { Combobox, FilePicker, Opt } from "../components/Pickers";
 import { ScopeSelector } from "../components/ScopeSelector";
-import { Badge, Button, Card, Field, Icon, useToast } from "../components/ui";
-
-type Zone = "submittal" | "examples" | "div01";
-type Pending = { key: string; name: string; status: "uploading" | "error"; error?: string };
+import { Badge, Button, Field, Icon, useToast } from "../components/ui";
 
 const TYPES = ["Product Data", "Shop Drawings", "Product Data and Shop Drawings", "Other"];
-const SEC_RE = /^\d{2}\s?\d{2}\s?\d{2}(\.\d{2})?$/;
-const normSec = (s: string) => { const d = s.replace(/\D/g, ""); return d.length >= 6 ? `${d.slice(0, 2)} ${d.slice(2, 4)} ${d.slice(4, 6)}` : s.trim(); };
+const normSec = (s: string) => { const d = s.replace(/\D/g, ""); return d.length >= 6 ? `${d.slice(0, 2)} ${d.slice(2, 4)} ${d.slice(4, 6)}` : ""; };
 
 function useDebounced<T>(v: T, ms = 450): T {
   const [d, setD] = useState(v);
@@ -17,84 +14,111 @@ function useDebounced<T>(v: T, ms = 450): T {
   return d;
 }
 
-export function NewReview({ project, tree, library, onLibraryChanged, onStarted, settingsMock, apiKeySet, defaultMode }: {
-  project: Project; tree: TreeNode[]; library: LibraryFile[]; onLibraryChanged: () => void; onStarted: (j: Job) => void;
-  settingsMock: boolean; apiKeySet: boolean; defaultMode?: string;
+export interface Prefill { spec_section?: string; spec_title?: string; seq?: number; revision?: string; title?: string; type?: string; subcontractor_id?: string; library_refs?: any }
+
+export function NewReview({ project, tree, library, defaults, subs, onSubsChanged, onStarted, settingsMock, apiKeySet, defaultMode, goLibrary, prefill }: {
+  project: Project; tree: TreeNode[]; library: LibraryFile[]; defaults: any; subs: Sub[]; onSubsChanged: () => void; onStarted: (j: Job) => void;
+  settingsMock: boolean; apiKeySet: boolean; defaultMode?: string; goLibrary: (tab: string) => void; prefill?: Prefill | null;
 }) {
   const toast = useToast();
-  const [form, setForm] = useState({ spec_section: "", spec_title: "", submittal_no: "", revision: "0", submittal_type: "Product Data",
-    title: "", required_date: "", supplier: "" });
-  const [files, setFiles] = useState<Record<Zone, Upload[]>>({ submittal: [], examples: [], div01: [] });
-  const [pending, setPending] = useState<Record<Zone, Pending[]>>({ submittal: [], examples: [], div01: [] });
-  const [libBusy, setLibBusy] = useState(false);
+  const [form, setForm] = useState({ spec_section: "", spec_title: "", submittal_no: "", revision: "0", submittal_type: "Product Data", title: "", required_date: "" });
+  const [subName, setSubName] = useState("");
+  const [subId, setSubId] = useState("");
+  const [files, setFiles] = useState<Upload[]>([]);
+  const [uploading, setUploading] = useState(0);
+  const [over, setOver] = useState(false);
+  const [filling, setFilling] = useState(false);
   const [instructions, setInstructions] = useState("");
   const [namingPattern, setNamingPattern] = useState("");
   const [mimic, setMimic] = useState(false);
   const [mode, setMode] = useState(defaultMode === "single" ? "single" : "cross");
-  useEffect(() => { if (defaultMode) setMode(defaultMode === "single" ? "single" : "cross"); }, [defaultMode]);
   const [scope, setScope] = useState<ScopeItem[]>([]);
   const [scopeMode, setScopeMode] = useState("flexible");
   const [scopeSrc, setScopeSrc] = useState("");
   const [scopeDirty, setScopeDirty] = useState(false);
   const [scopeLoading, setScopeLoading] = useState(false);
-  const [sections, setSections] = useState<{ number: string; title: string }[]>([]);
+  const [scopeOpen, setScopeOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [sections, setSections] = useState<{ number: string; title: string; division: string }[]>([]);
+  const [examples, setExamples] = useState<string[]>(defaults?.examples || []);
+  const [div01, setDiv01] = useState<string[]>(defaults?.div01 || []);
+  const [cover, setCover] = useState<string[]>(defaults?.cover ? [defaults.cover] : []);
   const [est, setEst] = useState<Estimate | null>(null);
-  const [preview, setPreview] = useState<{ name: string; source: string } | null>(null);
+  const [preview, setPreview] = useState<{ name: string; source: string; number: string } | null>(null);
   const [starting, setStarting] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const depth = useRef(0);
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
+  useEffect(() => { if (defaultMode) setMode(defaultMode === "single" ? "single" : "cross"); }, [defaultMode]);
   useEffect(() => { api.sections(project.id).then(setSections).catch(() => {}); }, [project.id, tree]);
+  useEffect(() => {
+    if (!prefill) return;
+    setForm((f) => ({ ...f, spec_section: prefill.spec_section || "", spec_title: prefill.spec_title || "", submittal_no: prefill.seq ? String(prefill.seq).padStart(2, "0") : "",
+      revision: prefill.revision ?? "0", title: prefill.title || "", submittal_type: prefill.type || "Product Data" }));
+    if (prefill.subcontractor_id) { const s = subs.find((x) => x.id === prefill.subcontractor_id); setSubId(prefill.subcontractor_id); setSubName(s?.name || ""); }
+    const refs = prefill.library_refs || {};
+    if (refs.examples) setExamples(refs.examples);
+    if (refs.div01) setDiv01(refs.div01);
+    if (refs.cover) setCover([refs.cover]);
+  }, [prefill]);
 
-  const secNorm = SEC_RE.test(form.spec_section.trim()) || form.spec_section.replace(/\D/g, "").length === 6 ? normSec(form.spec_section) : "";
-  const secMatch = sections.find((s) => s.number === secNorm);
+  const secNorm = normSec(form.spec_section);
   const designated = secNorm ? `S:${secNorm}` : "";
+  const secMatch = sections.find((s) => s.number === secNorm);
   useEffect(() => { if (secMatch && !form.spec_title) set("spec_title", secMatch.title); }, [secMatch?.number]);
 
-  // ---- uploads
-  const addFiles = async (zone: Zone, list: File[]) => {
-    const pend = list.map((f, i) => ({ key: `p${Date.now()}${i}`, name: f.name, status: "uploading" as const }));
-    setPending((p) => ({ ...p, [zone]: [...p[zone], ...pend] }));
+  // next free sequence for this section (only when the user hasn't typed one)
+  const seqTouched = useRef(false);
+  useEffect(() => {
+    if (!secNorm || seqTouched.current || prefill?.seq) return;
+    api.nextSeq(project.id, secNorm).then((r) => set("submittal_no", String(r.seq).padStart(2, "0"))).catch(() => {});
+  }, [secNorm]);
+
+  // ---------------------------------------------------------------- options
+  const sub = subs.find((s) => s.id === subId);
+  const subOpts: Opt[] = subs.map((s) => ({ value: s.id, label: s.name, sub: (s.divisions || []).map((d) => `Div ${d}`).join(", ") }));
+  const secOpts: Opt[] = useMemo(() => {
+    const preferred = new Set(sub?.divisions || []);
+    const all = sections.map((s) => ({ value: s.number, label: s.number, sub: s.title, group: `${preferred.has(s.division) ? "This subcontractor - " : ""}Division ${s.division} ${DIVISION_NAMES[s.division] || ""}`.trim(), d: s.division }));
+    all.sort((a, b) => (preferred.has(b.d) ? 1 : 0) - (preferred.has(a.d) ? 1 : 0) || a.value.localeCompare(b.value));
+    return all;
+  }, [sections, sub]);
+  const libOpts = (kind: string): Opt[] => library.filter((f) => f.kind === kind).map((f) => ({ value: f.id, label: f.filename, sub: `${f.pages} pp` }));
+
+  // ---------------------------------------------------------------- uploads
+  const addFiles = async (list: File[]) => {
+    const pdfs = list.filter((f) => f.name.toLowerCase().endsWith(".pdf"));
+    if (!pdfs.length) { toast("Only PDF files can be reviewed.", "bad"); return; }
+    setUploading((n) => n + pdfs.length);
     try {
-      const res = await api.upload(list);
-      setFiles((x) => {
-        const have = new Set(x[zone].map((u) => u.sha256));
-        return { ...x, [zone]: [...x[zone], ...res.files.filter((u) => !have.has(u.sha256))] };
-      });
-      const dupes = res.files.length - res.files.filter((u) => !files[zone].some((h) => h.sha256 === u.sha256)).length;
-      if (dupes > 0) toast(`${dupes} duplicate file(s) skipped`, "info");
-      res.errors.forEach((e) => toast(`${e.filename}: ${e.error}`, "bad"));
-      setPending((p) => ({ ...p, [zone]: p[zone].filter((x) => !pend.some((q) => q.key === x.key)) }));
-    } catch (e: any) {
-      toast(e.message, "bad");
-      setPending((p) => ({ ...p, [zone]: p[zone].map((x) => pend.some((q) => q.key === x.key) ? { ...x, status: "error", error: "Upload failed" } : x) }));
-    }
-  };
-  const addLibrary = async (list: File[]) => {
-    setLibBusy(true);
-    try {
-      const r = await api.uploadLibrary(project.id, list);
-      const dup = r.files.filter((f) => f.duplicate).length;
-      if (r.files.length - dup) toast(`${r.files.length - dup} file(s) added to the project library - cataloguing in the background`, "ok");
-      if (dup) toast(`${dup} file(s) already in the library`, "info");
+      const r = await api.upload(pdfs);
+      setFiles((x) => { const have = new Set(x.map((u) => u.sha256)); return [...x, ...r.files.filter((u) => !have.has(u.sha256))]; });
       r.errors.forEach((e) => toast(`${e.filename}: ${e.error}`, "bad"));
-      onLibraryChanged();
-    } catch (e: any) { toast(e.message, "bad"); } finally { setLibBusy(false); }
+    } catch (e: any) { toast(e.message, "bad"); } finally { setUploading((n) => n - pdfs.length); }
+  };
+  const move = (from: number, to: number) => setFiles((x) => { const a = [...x]; const [m] = a.splice(from, 1); a.splice(to, 0, m); return a; });
+  const subIds = files.map((u) => u.id);
+
+  const autofill = async () => {
+    if (!files.length) return;
+    setFilling(true);
+    try {
+      const r = await api.autofill(project.id, subIds);
+      setForm((f) => ({
+        ...f, spec_section: r.spec_section || f.spec_section, spec_title: r.spec_title || f.spec_title,
+        submittal_type: r.submittal_type || f.submittal_type, title: r.title || f.title,
+        revision: r.revision || f.revision,
+        submittal_no: r.sequence ? String(r.sequence).replace(/\D/g, "").padStart(2, "0") || f.submittal_no : r.next_seq ? String(r.next_seq).padStart(2, "0") : f.submittal_no,
+      }));
+      if (r.subcontractor) { setSubName(r.subcontractor); setSubId(r.subcontractor_id || ""); }
+      const got = ["spec_section", "submittal_type", "subcontractor", "title"].filter((k) => r[k]).length;
+      toast(got ? `Filled ${got} field${got > 1 ? "s" : ""} from the submittal - check them before running` : "Nothing recognisable found on the first pages", got ? "ok" : "info");
+    } catch (e: any) { toast(e.message, "bad"); } finally { setFilling(false); }
   };
 
-  const chipsFor = (zone: Zone): Chip[] => [
-    ...files[zone].map((u) => ({ key: u.id, name: u.filename, pages: u.pages, size: u.size, flags: u.flags })),
-    ...pending[zone].map((p) => ({ key: p.key, name: p.name, status: p.status, error: p.error })),
-  ];
-  const libChips: Chip[] = library.map((f) => ({
-    key: f.id, name: f.filename, pages: f.pages, size: f.size, error: f.status === "error" ? f.error || "Cataloguing failed" : undefined,
-    status: f.status === "ready" ? "ready" : f.status === "error" ? "error" : "processing", progress: f.progress,
-    extra: <> · <span className={`kind kind-${f.kind}`}>{f.kind === "auto" ? "detecting…" : f.kind}</span>
-      {f.status === "ready" ? <> · {f.notes}</> : f.status !== "error" ? <> · {f.notes || "queued"}</> : null}</>,
-  }));
-
-  // ---- scope suggestion
-  const subIds = files.submittal.map((u) => u.id);
-  const dSec = useDebounced(secNorm, 500);
+  // ---------------------------------------------------------------- scope, estimate, naming
+  const dSec = useDebounced(secNorm, 400);
   const suggest = async (reset = false) => {
     if (!dSec) return;
     setScopeLoading(true);
@@ -103,152 +127,198 @@ export function NewReview({ project, tree, library, onLibraryChanged, onStarted,
       let items = r.items;
       if (!items.some((i) => i.id === `S:${dSec}`) && r.found) items = [{ id: `S:${dSec}`, locked: true, reason: "Designated section" }, ...items];
       setScope(items); setScopeSrc(r.source); if (r.mode) setScopeMode(r.mode); setScopeDirty(false);
-      if (r.section_title && !form.spec_title) set("spec_title", r.section_title);
-    } catch (e: any) { toast(`Scope suggestion failed: ${e.message}`, "bad"); } finally { setScopeLoading(false); }
+    } catch (e: any) { toast(`Reference suggestion failed: ${e.message}`, "bad"); } finally { setScopeLoading(false); }
   };
-  const readySections = project.library.sections;
-  useEffect(() => { if (dSec && !scopeDirty) suggest(); }, [dSec, readySections, subIds.length]);
-
-  // ---- estimate + naming preview
+  useEffect(() => { if (dSec && !scopeDirty) suggest(); }, [dSec, project.library.sections, subIds.length]);
   const dScope = useDebounced(JSON.stringify(scope), 500);
   useEffect(() => {
     if (!subIds.length) { setEst(null); return; }
     api.estimate(project.id, { upload_ids: subIds, scope_items: scope, review_mode: mode }).then(setEst).catch(() => {});
   }, [dScope, subIds.join(","), mode]);
-  const dForm = useDebounced(JSON.stringify({ form, namingPattern, mimic, ex: files.examples.map((u) => u.id) }), 400);
+  const dForm = useDebounced(JSON.stringify({ form, namingPattern, mimic, examples }), 350);
   useEffect(() => {
-    if (!form.spec_section) { setPreview(null); return; }
-    api.namingPreview(project.id, { ...form, spec_section: secNorm || form.spec_section, naming_pattern: namingPattern, mimic_example_naming: mimic },
-      files.examples.map((u) => u.id)).then(setPreview).catch(() => setPreview(null));
+    if (!secNorm) { setPreview(null); return; }
+    api.namingPreview(project.id, { ...form, spec_section: secNorm, naming_pattern: namingPattern, mimic_example_naming: mimic }, examples)
+      .then(setPreview).catch(() => setPreview(null));
   }, [dForm]);
 
   const problems: string[] = [];
-  if (!secNorm) problems.push("Enter the spec section number (e.g. 08 71 00)");
-  if (!files.submittal.length) problems.push("Add the submittal in zone 1");
+  if (!files.length) problems.push("Add the submittal PDF");
+  if (!secNorm) problems.push("Choose the spec section");
   if (!apiKeySet && !settingsMock) problems.push("Add your Anthropic API key in Settings");
-  if (library.some((f) => f.status !== "ready" && f.status !== "error")) problems.push("Wait for the project library to finish cataloguing");
-  const libEmpty = !library.length;
 
   const run = async () => {
     if (problems.length) { toast(problems[0], "bad"); return; }
     setStarting(true);
     try {
       const job = await api.createJob(project.id, {
-        ...form, spec_section: secNorm, instructions, naming_pattern: namingPattern, mimic_example_naming: mimic, review_mode: mode,
-        uploads: { submittal: subIds, examples: files.examples.map((u) => u.id), div01: files.div01.map((u) => u.id) },
+        ...form, spec_section: secNorm, supplier: subName, subcontractor_id: subId, instructions, naming_pattern: namingPattern,
+        mimic_example_naming: mimic, review_mode: mode, uploads: { submittal: subIds },
+        library_refs: { examples, div01, cover: cover[0] || "" },
         scope: { mode: scopeMode, items: scope.length ? scope : [{ id: designated, locked: true }] },
       });
+      onSubsChanged();
       onStarted(job);
     } catch (e: any) { toast(e.message, "bad"); } finally { setStarting(false); }
   };
 
-  const remove = (zone: Zone) => (key: string) => {
-    setFiles((x) => ({ ...x, [zone]: x[zone].filter((u) => u.id !== key) }));
-    setPending((p) => ({ ...p, [zone]: p[zone].filter((u) => u.key !== key) }));
-  };
-  const reorder = (from: number, to: number) => setFiles((x) => {
-    const a = [...x.submittal]; const [m] = a.splice(from, 1); a.splice(to, 0, m); return { ...x, submittal: a };
-  });
+  const totalPages = files.reduce((s, u) => s + u.pages, 0);
+  const scopePages = scope.length;
+  const pendingLib = project.library.unprocessed + project.library.processing;
 
   return (
-    <div className="page">
-      <div className="page-head">
-        <div>
-          <h1>New submittal review</h1>
-          <p className="muted">Drop the package, confirm the reference scope, and run. Claude reviews against <b>{project.name}</b>'s own specs and drawings.</p>
-        </div>
-        {settingsMock && <Badge tone="warn" title="Offline demo mode: deterministic heuristics instead of Claude. Turn off in Settings.">Offline demo mode</Badge>}
-      </div>
+    <div className="page page-narrow">
+      <header className="page-head">
+        <h1>New Submittal Review</h1>
+        {settingsMock && <Badge tone="warn" title="Offline demo mode uses simple rules instead of the API. Turn it off in Settings.">Offline demo mode</Badge>}
+      </header>
 
-      <Card title="Submittal setup" icon="rules">
-        <div className="grid-form">
-          <Field label="Spec section" hint={secNorm ? (secMatch ? `In library: ${secMatch.title}` : libEmpty ? "Library empty" : "Not found in library") : "CSI number, e.g. 08 71 00"} className="f-sec">
-            <input className={`input mono ${secNorm && secMatch ? "input-ok" : ""}`} list="asm-sections" placeholder="08 71 00" value={form.spec_section}
-              onChange={(e) => { set("spec_section", e.target.value); set("spec_title", ""); setScopeDirty(false); }}
-              onBlur={() => secNorm && set("spec_section", secNorm)} />
-            <datalist id="asm-sections">{sections.map((s) => <option key={s.number} value={s.number}>{s.title}</option>)}</datalist>
-          </Field>
-          <Field label="Section title" className="f-title"><input className="input" placeholder="Auto-filled from the catalog" value={form.spec_title} onChange={(e) => set("spec_title", e.target.value)} /></Field>
-          <Field label="Submittal no." hint="Sequence, e.g. 01"><input className="input mono" placeholder="01" value={form.submittal_no} onChange={(e) => set("submittal_no", e.target.value)} /></Field>
-          <Field label="Revision"><input className="input mono" value={form.revision} onChange={(e) => set("revision", e.target.value)} /></Field>
-          <Field label="Type">
-            <select className="input" value={form.submittal_type} onChange={(e) => set("submittal_type", e.target.value)}>
-              {TYPES.map((t) => <option key={t}>{t}</option>)}
-            </select>
-          </Field>
-          <Field label="Title / description" className="f-wide"><input className="input" placeholder="Optional, e.g. Door Hardware - Sets 1-4" value={form.title} onChange={(e) => set("title", e.target.value)} /></Field>
-          <Field label="Supplier / subcontractor"><input className="input" placeholder="From the package if blank" value={form.supplier} onChange={(e) => set("supplier", e.target.value)} /></Field>
-          <Field label="Review requested by"><input className="input" type="date" value={form.required_date} onChange={(e) => set("required_date", e.target.value)} /></Field>
-        </div>
-      </Card>
-
-      <div className="zones">
-        <DropZone index={1} title="Submittal" required icon="file" subtitle="Product Data and/or Shop Drawings under review. Multiple files merge in this order - drag to reorder."
-          chips={chipsFor("submittal")} onFiles={(f) => addFiles("submittal", f)} onRemove={remove("submittal")} onReorder={reorder} emptyHint="Nothing yet." />
-        <DropZone index={2} title="Project information" icon="book" busy={libBusy}
-          subtitle="Specs, drawings, addenda, ASIs, RFIs. Stored in the project library and catalogued once - reused by every review."
-          chips={libChips} onFiles={addLibrary} emptyHint="Library is empty. Drop the project manual and drawing set once per project."
-          footer={library.length ? <p className="dz-foot"><Icon name="layers" size={14} /> {project.library.sections} spec sections · {project.library.sheets} sheets · {project.library.amendments} amendments catalogued</p> : null} />
-        <DropZone index={3} title="Quality template examples" icon="layers" subtitle="Approved example submittals. Used for format, order, cover and naming only - never as compliance evidence."
-          chips={chipsFor("examples")} onFiles={(f) => addFiles("examples", f)} onRemove={remove("examples")} emptyHint="Recommended." />
-        <DropZone index={4} title="Division 01 submittal procedures" optional icon="rules" subtitle="Usually 01 33 00. Overrides naming, cover sheet and package rules. If empty, the library's Division 01 section is used."
-          chips={chipsFor("div01")} onFiles={(f) => addFiles("div01", f)} onRemove={remove("div01")} />
-      </div>
-
-      <Card title="Reference scope" icon="search" sub="Exactly what the agents may read for this submittal - no run reads the whole spec book.">
-        {secNorm ? (
-          <ScopeSelector tree={tree} items={scope} designated={designated} mode={scopeMode} onMode={setScopeMode} loading={scopeLoading}
-            source={scopeSrc} onReset={() => suggest(true)} onChange={(i) => { setScope(i); setScopeDirty(true); }}
-            footer={est && (
-              <div className="scope-foot">
-                <span><b>{est.library_pages}</b> library pages</span>
-                <span><b>{est.submittal_pages}</b> submittal pages</span>
-                <span>~<b>{(est.est_input_tokens / 1000).toFixed(0)}k</b> input tokens</span>
-                <span title={Object.entries((est as any).by_stage || {}).map(([k, v]) => `${k}: $${Number(v).toFixed(2)}`).join("\n")}>est. <b>${est.est_cost_low.toFixed(2)}-${est.est_cost_high.toFixed(2)}</b> {est.mock && "(offline: $0)"}</span>
-                <span className="muted">job cap ${est.usd_cap?.toFixed(2)}</span>
-              </div>
-            )} />
-        ) : <p className="muted">Enter the spec section above to load the suggested scope.</p>}
-      </Card>
-
-      <div className="two-col">
-        <Card title="Reviewer instructions" icon="spark" sub="Passed to every agent as a high-priority note.">
-          <textarea className="input textarea" maxLength={2000} rows={6} value={instructions} onChange={(e) => setInstructions(e.target.value)}
-            placeholder={'e.g. "Review hardware sets 3-5 only"\n"Approved substitution per RFI 112: LCN 4040XP"\n"Owner standard is Schlage"\n"Include spec excerpt"'} />
-          <div className="count">{instructions.length}/2000</div>
-        </Card>
-        <Card title="File naming" icon="file" sub="Division 01 rules found during the run take precedence over the company default.">
-          <Field label="Naming pattern (optional override)" hint="Tokens: {SpecSection} {Seq:02d} {Rev} {SpecTitle} {Type} {TypeAbbr} (PD/SD) {Title} {ProjectNumber} {Date}">
-            <input className="input mono" placeholder="{SpecSection} - {Seq:02d}.{Rev} {SpecTitle} - {TypeAbbr}" value={namingPattern} onChange={(e) => setNamingPattern(e.target.value)} />
-          </Field>
-          <label className="toggle">
-            <input type="checkbox" checked={mimic} onChange={(e) => setMimic(e.target.checked)} />
-            <span className="toggle-ui" /> Mimic naming from the quality template file name
-          </label>
-          <div className="preview-name">
-            <span className="muted small">Preview</span>
-            <code>{preview?.name || "—"}</code>
-            {preview && <span className="muted small">from {preview.source}</span>}
+      {/* ------------------------------------------------ 1. the submittal: the only drop target on this page */}
+      <section
+        className={`sheet ${over ? "sheet-over" : ""} ${files.length ? "sheet-has" : ""}`}
+        onDragEnter={(e) => { e.preventDefault(); depth.current++; setOver(true); }}
+        onDragOver={(e) => e.preventDefault()}
+        onDragLeave={() => { depth.current--; if (depth.current <= 0) { setOver(false); depth.current = 0; } }}
+        onDrop={async (e) => { e.preventDefault(); depth.current = 0; setOver(false); const viaEntries = await entriesToFiles(e.dataTransfer.items); addFiles(viaEntries.length ? viaEntries : Array.from(e.dataTransfer.files)); }}
+        aria-label="Submittal"
+      >
+        <div className="sheet-body">
+          <div className="sheet-head">
+            <h2>Submittal</h2>
+            <p>Product data or shop drawings to review. Several PDFs are merged in the order shown.</p>
           </div>
-        </Card>
-      </div>
+          <button type="button" className="sheet-drop" onClick={() => fileInput.current?.click()}>
+            {uploading ? <span className="spinner spinner-brand" /> : <Icon name="upload" size={22} />}
+            <span><b>Drop the submittal PDF here</b> or click to browse</span>
+          </button>
+          <input ref={fileInput} type="file" accept="application/pdf,.pdf" multiple hidden onChange={(e) => { addFiles(Array.from(e.target.files || [])); e.target.value = ""; }} />
+          {files.length > 0 && (
+            <ul className="chips">
+              {files.map((u, i) => (
+                <li key={u.id} className="chip" draggable onDragStart={(e) => e.dataTransfer.setData("text/plain", String(i))}
+                  onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); e.stopPropagation(); const from = Number(e.dataTransfer.getData("text/plain")); if (!Number.isNaN(from)) move(from, i); }}>
+                  <Icon name="grip" size={14} className="chip-grip" />
+                  <Icon name="file" size={16} className="chip-file" />
+                  <div className="chip-main"><span className="chip-name mono">{u.filename}</span>
+                    <span className="chip-meta">{u.pages} pages, {fmtBytes(u.size)}{u.flags?.includes("ocr_needed") && <span className="t-warn"> - scanned, text will be recognised</span>}</span></div>
+                  <button className="icon-btn" onClick={() => setFiles((x) => x.filter((y) => y.id !== u.id))} aria-label={`Remove ${u.filename}`}><Icon name="x" size={15} /></button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {files.length > 0 && (
+            <div className="sheet-actions">
+              <Button icon="wand" onClick={autofill} loading={filling}>Auto-fill details from submittal</Button>
+              <span className="muted small">Reads the first pages for spec section, type, subcontractor and title.</span>
+            </div>
+          )}
+        </div>
+        <dl className="titleblock" aria-label="Submittal title block">
+          <div className="tb-wide"><dt>Project</dt><dd>{project.number ? `${project.number} ` : ""}{project.name}</dd></div>
+          <div><dt>Spec section</dt><dd className="mono">{secNorm || "\u2014"}</dd></div>
+          <div><dt>Number</dt><dd className="mono">{preview?.number?.split(" - ").pop() || "\u2014"}</dd></div>
+          <div className="tb-wide"><dt>Subcontractor</dt><dd>{subName || "\u2014"}</dd></div>
+          <div><dt>Type</dt><dd>{form.submittal_type.replace("Product Data and Shop Drawings", "PD + SD")}</dd></div>
+          <div><dt>Pages</dt><dd className="mono">{totalPages || "\u2014"}</dd></div>
+        </dl>
+      </section>
+
+      {/* ------------------------------------------------ details */}
+      <section className="panel">
+        <h3 className="panel-title">Submittal details</h3>
+        <div className="form-grid">
+          <Field label="Subcontractor" className="c7">
+            <Combobox ariaLabel="Subcontractor" value={subName} options={subOpts} placeholder="Start typing or pick from the project list"
+              onChange={(v) => { setSubName(v); setSubId(""); }} onPick={(o) => { setSubName(o.label); setSubId(o.value); }}
+              onCreate={(t) => { setSubName(t); setSubId(""); toast(`"${t}" will be added to this project's subcontractors when you run the review`, "info"); }} />
+          </Field>
+          <Field label="Spec section" className="c5" hint={secNorm ? (secMatch ? secMatch.title : "Not in the project library") : undefined}>
+            <Combobox ariaLabel="Spec section" mono value={form.spec_section} options={secOpts} placeholder="08 71 00"
+              emptyText="No spec sections catalogued yet - add them in Project Library"
+              onChange={(v) => { set("spec_section", v); set("spec_title", ""); seqTouched.current = false; setScopeDirty(false); }}
+              onPick={(o) => { set("spec_section", o.value); set("spec_title", o.sub || ""); seqTouched.current = false; setScopeDirty(false); }} />
+          </Field>
+          <Field label="Section title" className="c6"><input className="input" value={form.spec_title} onChange={(e) => set("spec_title", e.target.value)} placeholder="Filled from the library" /></Field>
+          <Field label="Submittal no." className="c3"><input className="input mono" value={form.submittal_no} onChange={(e) => { seqTouched.current = true; set("submittal_no", e.target.value); }} placeholder="01" /></Field>
+          <Field label="Revision" className="c3"><input className="input mono" value={form.revision} onChange={(e) => set("revision", e.target.value)} /></Field>
+          <Field label="Type" className="c4">
+            <select className="input" value={form.submittal_type} onChange={(e) => set("submittal_type", e.target.value)}>{TYPES.map((t) => <option key={t}>{t}</option>)}</select>
+          </Field>
+          <Field label="Title / description" className="c8"><input className="input" value={form.title} onChange={(e) => set("title", e.target.value)} placeholder="e.g. Door Hardware - Sets 1-4" /></Field>
+          <Field label="Review requested by" className="c4"><input className="input" type="date" value={form.required_date} onChange={(e) => set("required_date", e.target.value)} /></Field>
+        </div>
+      </section>
+
+      {/* ------------------------------------------------ reference materials: quiet rows, library-backed */}
+      <section className="panel">
+        <h3 className="panel-title">Reference materials <button className="link-btn small" onClick={() => goLibrary("info")}>Manage in Project Library</button></h3>
+        {pendingLib > 0 && <p className="note-warn"><Icon name="alert" size={15} /> {pendingLib} project file{pendingLib > 1 ? "s are" : " is"} not processed yet, so {pendingLib > 1 ? "they" : "it"} can't be referenced. <button className="link-btn" onClick={() => goLibrary("info")}>Process in Project Library</button></p>}
+        <div className="refrow">
+          <div className="refrow-label"><b>Project information</b><span>Spec sections, drawing sheets and documents this review may read</span></div>
+          <button className="fpick-btn has" onClick={() => setScopeOpen(!scopeOpen)} disabled={!secNorm} aria-expanded={scopeOpen}>
+            <span className="fpick-label">{!secNorm ? "Choose the spec section first" : scopeLoading ? "Finding related references..." : `${scopePages} reference${scopePages === 1 ? "" : "s"} selected`}</span>
+            <Icon name="down" size={15} className={scopeOpen ? "rot180" : ""} />
+          </button>
+        </div>
+        {scopeOpen && secNorm && (
+          <div className="refrow-expand">
+            <p className="muted small">Add anything else the reviewer must check against - for example the concrete spec and the footing detail for a fence submittal. Search by number, title or keyword.</p>
+            <ScopeSelector tree={tree} items={scope} designated={designated} mode={scopeMode} onMode={setScopeMode} loading={scopeLoading}
+              source={scopeSrc} onReset={() => suggest(true)} onChange={(i) => { setScope(i); setScopeDirty(true); }} />
+          </div>
+        )}
+        <div className="refrow">
+          <div className="refrow-label"><b>Quality templates</b><span>Approved examples to copy format and order from</span></div>
+          <FilePicker multiple options={libOpts("example")} selected={examples} onChange={setExamples} placeholder="None" emptyText="No quality templates in the library yet"
+            footer={<button className="link-btn small" onClick={() => goLibrary("example")}>Add in Project Library</button>} />
+        </div>
+        <div className="refrow">
+          <div className="refrow-label"><b>Division 01 submittal procedures</b><span>Naming, cover and package rules</span></div>
+          <FilePicker multiple options={libOpts("div01")} selected={div01} onChange={setDiv01} placeholder="Use 01 33 00 from the spec library" emptyText="No Division 01 files in the library yet"
+            footer={<button className="link-btn small" onClick={() => goLibrary("div01")}>Add in Project Library</button>} />
+        </div>
+        <div className="refrow">
+          <div className="refrow-label"><b>Cover page</b><span>First page of the package, filled in from these details</span></div>
+          <FilePicker options={libOpts("cover")} selected={cover} onChange={setCover} placeholder="Standard Ajax cover" emptyText="No cover templates in the library yet"
+            footer={<button className="link-btn small" onClick={() => goLibrary("cover")}>Add in Project Library</button>} />
+        </div>
+      </section>
+
+      {/* ------------------------------------------------ instructions & naming */}
+      <section className="panel">
+        <button className="panel-toggle" onClick={() => setMoreOpen(!moreOpen)} aria-expanded={moreOpen}>
+          <span><b>Instructions and file naming</b><span className="muted small"> {instructions ? "Instructions added" : "Optional"} {preview ? `- ${preview.name}` : ""}</span></span>
+          <Icon name="down" size={16} className={moreOpen ? "rot180" : ""} />
+        </button>
+        {moreOpen && (
+          <div className="more-grid">
+            <Field label="Reviewer instructions" hint={`${instructions.length}/2000 - passed to the reviewer as a high-priority note`}>
+              <textarea className="input textarea" maxLength={2000} rows={5} value={instructions} onChange={(e) => setInstructions(e.target.value)}
+                placeholder={'Review hardware sets 3-5 only\nSubstitution approved per RFI 112: LCN 4040XP\nInclude spec excerpt'} />
+            </Field>
+            <div>
+              <Field label="File name pattern (optional)" hint="Tokens: {SpecSection} {Seq:02d} {Rev} {SpecTitle} {TypeAbbr} {Title} {ProjectNumber} {Date}">
+                <input className="input mono" placeholder="{SpecSection} - {Seq:02d}.{Rev} {SpecTitle} - {TypeAbbr}" value={namingPattern} onChange={(e) => setNamingPattern(e.target.value)} />
+              </Field>
+              <label className="toggle"><input type="checkbox" checked={mimic} onChange={(e) => setMimic(e.target.checked)} /><span className="toggle-ui" /> Copy naming from the quality template's file name</label>
+            </div>
+          </div>
+        )}
+        {preview && <div className="filename"><Icon name="file" size={15} /><code>{preview.name}</code><span className="muted small">from {preview.source}</span></div>}
+      </section>
 
       <div className="runbar">
         <div className="seg seg-mode" role="radiogroup" aria-label="Review mode">
           <button role="radio" aria-checked={mode === "cross"} className={mode === "cross" ? "on" : ""} onClick={() => setMode("cross")}
-            title="Two independent Opus reviewers (one proves compliance, one hunts deviations); disagreements are adjudicated. Most thorough.">
-            Cross-examined <span className="seg-sub">2 agents</span></button>
+            title="Two independent reviewers - one proves compliance, one hunts deviations - and disagreements are settled. Most thorough.">
+            Cross-examined <span className="seg-sub">2 reviewers</span></button>
           <button role="radio" aria-checked={mode === "single"} className={mode === "single" ? "on" : ""} onClick={() => setMode("single")}
-            title="One Opus reviewer builds the checklist and reviews in a single pass. Cheaper and faster; no second opinion.">
-            Single agent <span className="seg-sub">faster</span></button>
+            title="One reviewer builds the checklist and reviews in a single pass. Cheaper and faster.">
+            Single pass <span className="seg-sub">faster</span></button>
         </div>
         <div className="runbar-info">
-          {problems.length ? (
-            <span className="muted"><Icon name="alert" size={15} /> {problems[0]}</span>
-          ) : (
-            <span><Icon name="check" size={15} className="t-ok" /> Ready: {files.submittal.reduce((s, u) => s + u.pages, 0)} submittal pages · {scope.length} reference items · {scopeMode} scope
-              {est && !est.mock && <> · est. ${est.est_cost_low.toFixed(2)}-${est.est_cost_high.toFixed(2)}
-                {(est as any).alt_mode_mid !== undefined && <span className="muted"> (other mode ~${Number((est as any).alt_mode_mid).toFixed(2)})</span>}</>}</span>
+          {problems.length ? <span className="muted"><Icon name="alert" size={15} /> {problems[0]}</span> : (
+            <span><b>{totalPages}</b> pages against <b>{scope.length}</b> references{est && !est.mock && <> - est. <b>${est.est_cost_low.toFixed(2)}-{est.est_cost_high.toFixed(2)}</b></>}</span>
           )}
         </div>
         <Button variant="primary" size="lg" icon="play" onClick={run} loading={starting} disabled={!!problems.length}>Run review</Button>

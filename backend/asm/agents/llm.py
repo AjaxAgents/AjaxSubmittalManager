@@ -105,10 +105,10 @@ class CostTracker:
 _clients: dict[tuple[str, int], Any] = {}
 
 
-def client():
+def client(key: str | None = None):
     """AsyncAnthropic client per (API key, event loop). httpx async clients are bound to the loop that
     created them, and ASM runs ingest summaries on a worker-thread loop and reviews on the server loop."""
-    key = api_key()
+    key = key or api_key()
     if not key:
         raise LLMUnavailable("ANTHROPIC_API_KEY is not set. Add it in Settings or in the backend .env file.")
     try:
@@ -156,7 +156,8 @@ async def create_message(tracker: CostTracker, stage: str, *, system: list[dict]
     extra = (models_cfg().get("extra_params") or {}).get(stage) or {}
     params.update(extra)
     t0 = time.time()
-    c = client()
+    from ..auth import api_key_for_project
+    c = client(api_key_for_project(tracker.project_id))
     attempt = 0
     while True:
         try:
