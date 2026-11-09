@@ -12,6 +12,12 @@ const STAGES: [string, string, string][] = [
   ["assemble", "Markup & Assemble", "Bluebeam-editable markups, cover, TOC, bookmarks"],
   ["qa", "QA Check", "Naming, cover, markup placement, TXT"],
 ];
+const STAGES_SINGLE: [string, string, string][] = [
+  STAGES[0], STAGES[1],
+  ["single", "Reviewer (single agent)", "One Opus pass: build the checklist, prove and challenge each requirement"],
+  ["adjudicator", "Verify citations", "Check every cited page and quote; unverified calls go to Human Review"],
+  STAGES[6], STAGES[7],
+];
 type StageState = { status: string; msg?: string; elapsed?: number; started?: number };
 
 export function RunView({ jobId, onRerun, onNew }: { jobId: string; onRerun: (j: Job) => void; onNew: () => void }) {
@@ -22,12 +28,13 @@ export function RunView({ jobId, onRerun, onNew }: { jobId: string; onRerun: (j:
   const [cap, setCap] = useState(0);
   const [status, setStatus] = useState("queued");
   const [mock, setMock] = useState(false);
+  const [mode, setMode] = useState("cross");
   const [now, setNow] = useState(Date.now() / 1000);
   const toast = useToast();
 
   useEffect(() => {
     setStages({}); setLog([]); setSpent(0); setStatus("queued"); setJob(null);
-    api.job(jobId).then((j) => { setJob(j); setStatus(j.status); if (j.params?.usd_cap) setCap(j.params.usd_cap); }).catch(() => {});
+    api.job(jobId).then((j) => { setJob(j); setStatus(j.status); if (j.params?.review_mode) setMode(j.params.review_mode); if (j.params?.usd_cap) setCap(j.params.usd_cap); }).catch(() => {});
     api.settings().then((s) => setCap((c) => c || s.usd_cap)).catch(() => {});
     const es = new EventSource(`/api/jobs/${jobId}/events`);
     es.onmessage = (m) => {
@@ -43,6 +50,7 @@ export function RunView({ jobId, onRerun, onNew }: { jobId: string; onRerun: (j:
         setLog((l) => [...l, { t: e.t, text: e.msg, tone: e.level === "error" ? "bad" : e.level === "warn" ? "warn" : undefined }]);
       } else if (e.kind === "job") {
         if (e.mock !== undefined) setMock(e.mock);
+        if (e.mode) setMode(e.mode);
         setStatus(e.status);
         if (["done", "error", "cancelled"].includes(e.status)) {
           api.job(jobId).then(setJob);
@@ -66,7 +74,7 @@ export function RunView({ jobId, onRerun, onNew }: { jobId: string; onRerun: (j:
       <div className="page-head">
         <div>
           <h1>{running ? "Reviewing…" : status === "error" ? "Run failed" : status === "cancelled" ? "Run cancelled" : "Review"}</h1>
-          <p className="muted mono">{job?.params?.spec_section} {job?.params?.spec_title} · Submittal {job?.params?.submittal_no || "-"} Rev {job?.params?.revision}{mock && " · offline demo mode"}</p>
+          <p className="muted mono">{job?.params?.spec_section} {job?.params?.spec_title} · Submittal {job?.params?.submittal_no || "-"} Rev {job?.params?.revision}{mode === "single" ? " · single agent" : " · cross-examined"}{mock && " · offline demo mode"}</p>
         </div>
         <div className="row gap">
           {running && <Button variant="danger" icon="stop" onClick={() => api.cancel(jobId).then(() => toast("Cancelling after the current call…"))}>Cancel</Button>}
@@ -77,7 +85,7 @@ export function RunView({ jobId, onRerun, onNew }: { jobId: string; onRerun: (j:
       <div className="run-grid">
         <Card title="Pipeline" icon="layers">
           <ol className="stepper">
-            {STAGES.map(([k, label, desc], i) => {
+            {(mode === "single" ? STAGES_SINGLE : STAGES).map(([k, label, desc], i) => {
               const s = stages[k] || { status: "pending" };
               const el = s.status === "running" && s.started ? Math.max(0, now - s.started) : s.elapsed;
               return (
@@ -149,7 +157,7 @@ function Results({ job, onRerun, onNew }: { job: Job; onRerun: (j: Job) => void;
     <div className="page page-results">
       <div className="res-head">
         <div className="res-title">
-          <span className="eyebrow">Review complete · {fmtTime(job.updated_at)}{r.mock && " · offline demo mode"}</span>
+          <span className="eyebrow">Review complete · {fmtTime(job.updated_at)} · {r.review_mode === "single" ? "single agent" : "cross-examined"}{r.mock && " · offline demo mode"}</span>
           <h1 className="mono">{r.pdf_name}</h1>
           <div className="res-counts">
             <Badge tone="ok">{counts.compliant || 0} compliant</Badge>

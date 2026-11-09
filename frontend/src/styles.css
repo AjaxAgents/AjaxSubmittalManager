@@ -198,6 +198,9 @@ select.input { cursor: pointer; }
 /* ---------- run bar */
 .runbar { position: sticky; bottom: 16px; display: flex; align-items: center; gap: var(--s4); background: rgba(255, 255, 255, .92); backdrop-filter: blur(8px);
   border: 1px solid var(--border-soft); border-radius: var(--radius-lg); padding: 12px 12px 12px var(--s5); box-shadow: var(--shadow-lg); z-index: 4; }
+.seg-mode button { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.2; padding: 6px 14px; }
+.seg-sub { font-size: 10.5px; font-weight: 500; color: var(--text-faint); }
+.seg-mode button.on .seg-sub { color: var(--brand-orange-pressed); }
 .runbar-info { flex: 1; font-size: 13px; display: flex; align-items: center; } .runbar-info .ic { vertical-align: -3px; margin-right: 4px; }
 
 /* ---------- run progress */

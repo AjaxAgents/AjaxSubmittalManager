@@ -19,7 +19,8 @@ Each case folder in eval/cases/ holds the PDFs for one past submittal plus case.
       - id: AE-2
         keywords: ["hinge", "5 x 4"]
 
-Usage: python eval/run_eval.py [case_name ...]  (add --mock to exercise the pipeline offline)
+Usage: python eval/run_eval.py [case_name ...] [--mode cross|single|both]  (add --mock to run offline)
+--mode both runs every case in both review modes so you can compare recall and cost side by side.
 Prints recall (A/E deviations caught as Non-compliant or Human Review), unmatched Non-compliant calls
 (candidate false positives for a reviewer to judge), citation coverage, run time and cost per case.
 Real runs call the Claude API and cost money. Keep confidential cases out of git (eval/cases is ignored).
@@ -40,7 +41,13 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 
 def main() -> None:
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    argv = sys.argv[1:]
+    modes = ["cross"]
+    if "--mode" in argv:
+        m = argv[argv.index("--mode") + 1]
+        modes = ["cross", "single"] if m == "both" else [m]
+        argv = [a for a in argv if a not in ("--mode", m)]
+    args = [a for a in argv if not a.startswith("--")]
     if "--mock" in sys.argv:
         os.environ["ASM_MOCK_LLM"] = "1"
     tmp = Path(tempfile.mkdtemp(prefix="asm-eval-"))
@@ -64,7 +71,7 @@ def main() -> None:
         return db.add_upload(path.name, str(path), sha256_file(path), i["pages"], path.stat().st_size, i["flags"])["id"]
 
     rows = []
-    for case in cases:
+    for case, mode in [(c, m) for c in cases for m in modes]:
         spec = yaml.safe_load((case / "case.yaml").read_text())
         proj = db.create_project(name=f"eval {case.name}", number="EVAL")
         for fn in spec.get("library", []):
@@ -80,6 +87,7 @@ def main() -> None:
                         "examples": [add_upload(case / f) for f in spec.get("examples", [])],
                         "div01": [add_upload(case / f) for f in spec.get("div01", [])]},
             "scope": {"mode": spec.get("scope_mode", "flexible"), "items": heuristic_scope(proj["id"], spec["spec_section"])},
+            "review_mode": mode,
         }
         job = db.create_job(proj["id"], params)
         t0 = time.time()
@@ -87,7 +95,7 @@ def main() -> None:
         el = time.time() - t0
         j = db.get_job(job["id"])
         if j["status"] != "done":
-            rows.append((case.name, "ERROR", j["error"]))
+            rows.append((f"{case.name} [{mode}]", "ERROR", j["error"]))
             continue
         r = j["result"]
         flagged = [v for v in r["verdicts"] if v["result"] in ("non_compliant", "human_review")]
@@ -107,7 +115,7 @@ def main() -> None:
         n_exp = len(spec.get("expected", []))
         unmatched_nc = [s for i, (res, s, _) in enumerate(lines) if res == "non_compliant" and i not in used]
         cited = sum(1 for v in r["verdicts"] if v.get("pages") or v["result"] == "not_applicable")
-        rows.append((case.name, f"recall {caught}/{n_exp} ({(caught / n_exp * 100 if n_exp else 100):.0f}%)",
+        rows.append((f"{case.name} [{mode}]", f"recall {caught}/{n_exp} ({(caught / n_exp * 100 if n_exp else 100):.0f}%)",
                      f"unmatched NC {len(unmatched_nc)} | cited {cited}/{len(r['verdicts'])} | {el / 60:.1f} min | ${r['cost']:.2f}"
                      + (f" | missed {', '.join(misses)}" if misses else "")))
     print("\nEVALUATION")

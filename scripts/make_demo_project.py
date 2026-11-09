@@ -75,7 +75,7 @@ S013300 = [
     "A. Section includes administrative and procedural requirements for submitting Shop Drawings, Product Data, Samples, and other submittals.",
     "1.2 SUBMITTAL FORMATS",
     "A. Submit electronic submittals as PDF files through the Project management website (Procore).",
-    "B. File naming: name each file using the format [Section Number]-[Sequence Number]-[Revision] [Section Title] - [Submittal Type]. Example: 08 71 00-003-0 Door Hardware - Product Data.",
+    "B. File naming: name each file using the format [Section Number] - [Sequence].[Revision] [Section Title] - [Type Abbreviation]. Example: 08 71 00 - 03.0 Door Hardware - PD.",
     "C. Provide a transmittal cover sheet with Project name and number, Architect, Contractor, submittal number and revision, Specification Section number and title, date, and a list of items included.",
     "D. Product Data: mark each copy to show applicable products, models, options, and finishes. Cross out or delete information not applicable to the Project.",
     "E. Deviations: identify deviations from the Contract Documents on a separate deviation summary page and cloud each deviation on the submittal.",

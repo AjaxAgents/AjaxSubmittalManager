@@ -153,7 +153,7 @@ class Verdict(BaseModel):
     human_review_kind: HumanReviewKind = ""
     summary: str = Field(description="one line for the TXT: fact, page, spec citation")
     pages: list[int] = Field(default_factory=list)
-    decided_by: Literal["rules", "adjudicator", "instruction", "verifier", "budget"] = "rules"
+    decided_by: Literal["rules", "adjudicator", "instruction", "verifier", "budget", "single"] = "rules"
     advocate_position: str = ""
     examiner_position: str = ""
     txt_id: str = ""
@@ -172,6 +172,29 @@ class AdjudicatorDecision(BaseModel):
 
 class AdjudicatorResult(BaseModel):
     decisions: list[AdjudicatorDecision]
+
+
+# ----------------------------------------------------------------------------- single-agent mode
+
+class SingleFinding(BaseModel):
+    requirement_id: str
+    result: VerdictResult
+    human_review_kind: HumanReviewKind = Field("", description="required when result is human_review")
+    confidence: Literal["high", "medium", "low"]
+    evidence: list[Evidence] = Field(default_factory=list)
+    reason: str = Field(description="one line for the review notes: fact, page, spec citation")
+    markups: list[MarkupInstruction] = Field(default_factory=list)
+
+
+class SingleReviewResult(BaseModel):
+    spec_section_title: str
+    requirements: list[Requirement]
+    findings: list[SingleFinding]
+    package_rules: PackageRules = Field(default_factory=PackageRules)
+    scope_notes: list[str] = Field(default_factory=list)
+    extra_issues: list[ExtraIssue] = Field(default_factory=list)
+    general_markups: list[MarkupInstruction] = Field(default_factory=list,
+                                                     description="selection highlights / X-outs not tied to one requirement")
 
 
 # ----------------------------------------------------------------------------- QA

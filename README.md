@@ -72,13 +72,21 @@ Adjudicator use Sonnet, and packaging/QA are plain code (`config/models.yaml`). 
 prompt prefix, so the second one reads the submittal at 5% of the input price. The Adjudicator sees only
 disputed items and their pages.
 
+**Review mode** (toggle next to the Run button; default in Settings):
+- **Cross-examined** (default) - Compliance Advocate + Non-Compliance Examiner (2 Opus agents, independent),
+  disagreements adjudicated by Sonnet. Most thorough; use for packages going to the A/E.
+- **Single agent** - one Opus agent builds the checklist and reviews in one pass, arguing both sides itself;
+  citations are still machine-verified and anything unverified goes to Human Review. ~35-40% cheaper and faster;
+  good for resubmittals and simple product data. `python eval/run_eval.py --mode both` compares the two on
+  your past submittals.
+
 Typical estimates (verify against the *Sources & cost* tab after real runs):
 
-| Submittal | Estimated cost |
-| --- | --- |
-| 10-page product data | ~$0.70-1.30 |
-| 40-page product data | ~$1.20-2.50 |
-| 75-page package | ~$2.00-3.90 |
+| Submittal | Cross-examined | Single agent |
+| --- | --- | --- |
+| 10-page product data | ~$0.85-1.70 | ~$0.50-1.00 |
+| 40-page product data | ~$1.20-2.50 | ~$0.80-1.60 |
+| 75-page package | ~$1.60-3.30 | ~$1.15-2.30 |
 
 Every job has a dollar cap (default $6, Settings): at 80% Opus stages fall back to Sonnet; at 100% the job
 stops and unreviewed items go to Human Review. The pre-run estimate is shown next to the Run button.

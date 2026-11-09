@@ -30,13 +30,18 @@ Browser (React)  --REST/SSE-->  FastAPI (localhost:8765)  --Messages API-->  Cla
 3. **Planner** (Sonnet) - reads designated section + amendments via tools; atomic requirements with citations;
    package rules from Division 01 and examples.
 4. **Advocate / Examiner** (Opus, parallel, independent) - identical cached prefix; only the ROLE block differs.
-5. **Verify + adjudicate** - citations checked against page text; rule table settles agreements; Opus
+5. **Verify + adjudicate** - citations checked against page text; rule table settles agreements; Sonnet
    Adjudicator decides disputes or escalates to Human Review.
 6. **Assemble** - markups chosen per verdict (A/E layer vs hidden internal layer), package built, named.
-7. **QA** (Sonnet) - rendered key pages + TXT checked; deterministic checks (blank/duplicate pages, size,
+7. **QA** - deterministic checks always; optional Sonnet visual check (`qa.llm_check`) (blank/duplicate pages, size,
    unanchored markups). Notes go into the TXT.
 
 Re-run reuses intake/planner/reviewer JSON and redoes 5-7 with the reviewer's notes.
+
+**Single-agent mode** (`review_mode: single`): steps 3-4 are replaced by one Opus agent (`prompts/single.md`,
+`stages.run_single`) that returns requirements + final verdicts + markups (`SingleReviewResult`). It is
+converted to the two-reviewer shapes (`adjudicate.single_to_parts`) so citation verification, markup selection,
+re-runs and packaging are shared; `single_verdicts` sends any unverified or low-confidence call to Human Review.
 
 ## Deviations from the written spec (deliberate, v1)
 - Plain CSS with design tokens instead of Tailwind (fewer moving parts; same tokens).

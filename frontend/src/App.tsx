@@ -139,7 +139,7 @@ function Shell() {
             <>
               <div style={{ display: view === "new" ? "block" : "none" }}>
                 <NewReview key={`${project.id}-${reviewKey}`} project={project} tree={tree} library={files} onLibraryChanged={loadLibrary}
-                  onStarted={started} settingsMock={!!settings?.mock} apiKeySet={!!settings?.api_key_set} />
+                  onStarted={started} settingsMock={!!settings?.mock} apiKeySet={!!settings?.api_key_set} defaultMode={settings?.review_mode} />
               </div>
               {view === "library" && <Library project={project} files={files} tree={tree} onChanged={loadLibrary} />}
               {view === "history" && <History project={project} onOpen={openJob} />}
