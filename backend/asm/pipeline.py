@@ -219,6 +219,15 @@ def _assign_txt_ids(verdicts: list[Verdict], previous: dict[str, str] | None = N
 
 # ----------------------------------------------------------------------------- main run
 
+def _sub_record(project_id: str, params: dict) -> dict:
+    """The subcontractor picked on the review form (address, city... for the cover page)."""
+    sid = params.get("subcontractor_id") or ""
+    s = db.get_sub(sid) if sid else None
+    if not s and params.get("supplier"):
+        s = next((x for x in db.list_subs(project_id) if x["name"].lower() == str(params["supplier"]).lower()), None)
+    return s or {}
+
+
 async def run_job(job_id: str, rerun_notes: str = "") -> None:
     ev = events_for(job_id)
     ev.loop = asyncio.get_running_loop()
@@ -531,6 +540,8 @@ async def run_job(job_id: str, rerun_notes: str = "") -> None:
             "manufacturers": smap.manufacturers, "owner": project.get("owner"), "address": project.get("address"),
             "seq": naming.parse_seq(params.get("submittal_no", ""), params["spec_section"])[0],
             "type_abbr": naming.tokens(params, project).get("TypeAbbr", ""), "prepared_by": params.get("_prepared_by", ""),
+            "sub": _sub_record(project["id"], params), "date_format": naming.naming_cfg().get("cover_date_format", "%m/%d/%Y"),
+            "needed_days": naming.naming_cfg().get("needed_by_days", 14),
         }
         meta = {"title": base, "author": project.get("contractor") or "Ajax Building Company",
                 "subject": f"{params['spec_section']} {params.get('spec_title', '')} - Submittal {sub_no}",

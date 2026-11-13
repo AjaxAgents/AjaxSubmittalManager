@@ -60,15 +60,17 @@ searchable by division, with status, subcontractor and revision), **New Submitta
    - *Quality templates* (example submittals), *Division 01* procedures, and *Cover page* templates. Mark the
      ones to use by default. For a cover template, **Map fields** links each form field or text box to
      submittal data; you can also type `{ProjectName}`, `{SubmittalNo}`, `{SpecSection}`, `{Subcontractor}`
-     etc. anywhere on the template. Covers are filled by fixed rules, not by the model.
+     etc. anywhere on the template. Subcontractor address and city/state/ZIP come from the subcontractor's record; "Date needed by" is today + N days (set per field) unless the review form has a date. Covers are filled by fixed rules, not by the model.
    - *Divisions & subcontractors* - preload the divisions in play and who holds each scope.
    - *Catalog* - filter by specs, drawings, amendments or documents (and by division or discipline), sort, and click
      an item to read its pages beside the list or full screen.
 3. **New Submittal Review**: drop the submittal PDF, then **Auto-fill details** to read the spec section,
    type, subcontractor and title from its first pages. The subcontractor, spec section, submittal number and
-   revision autocomplete from the project. Under *Reference materials*, the project-information scope is
-   pre-selected (add anything else the review needs, e.g. the concrete spec and a footing detail for a fence
-   submittal); quality template, Division 01 and cover page default from the library.
+   revision autocomplete from the project. Under *Reference materials*, only what the review clearly needs is
+   included (the section, its amendments, sections it references, 01 33 procedures, sheets that cite it); weaker
+   matches wait unticked under *Suggested*. Search everything and use Select all / Deselect all to add or remove
+   in bulk (e.g. the concrete spec and a footing detail for a fence submittal). Quality template, Division 01 and
+   cover page default from the library.
 4. Choose **Cross-examined** (two reviewers + adjudicator) or **Single pass**, and **Run review**. Watch each
    stage and live cost; then page through the marked-up PDF, the requirements matrix and the TXT notes.
 5. **Re-run** with notes ("N-02 accepted per RFI 112") to redo only adjudication and assembly.

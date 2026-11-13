@@ -5,9 +5,9 @@ Keep field descriptions short and concrete: Claude reads them.
 """
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ----------------------------------------------------------------------------- intake
 
@@ -32,12 +32,38 @@ class Product(BaseModel):
     spec_article_guess: str = Field("", description="likely governing spec article, e.g. 2.3 if known")
 
 
+# Submittal types offered in the app (order = dropdown order). Abbreviations live in config/naming.yaml.
+SUBMITTAL_TYPES: tuple[str, ...] = (
+    "Product Data", "Shop Drawings", "Product Data & Shop Drawings", "Samples", "Calculations", "Certificates",
+    "Test Reports", "Qualification Data", "Delegated Design", "Coordination Drawings", "Mock-ups",
+    "Operation & Maintenance Data", "Warranty", "Sustainable Design (LEED)", "Schedules", "Other",
+)
+_LEGACY_TYPES = {"product data and shop drawings": "Product Data & Shop Drawings", "sample": "Samples",
+                 "shop drawing": "Shop Drawings", "o&m": "Operation & Maintenance Data", "leed": "Sustainable Design (LEED)"}
+
+
+def normalize_type(t: str | None) -> str:
+    t = (t or "").strip()
+    if not t:
+        return ""
+    for k in SUBMITTAL_TYPES:
+        if k.lower() == t.lower():
+            return k
+    return _LEGACY_TYPES.get(t.lower(), t)
+
+
 class SubmittalMap(BaseModel):
-    submittal_type: Literal["Product Data", "Shop Drawings", "Product Data and Shop Drawings", "Other"]
+    submittal_type: Literal[SUBMITTAL_TYPES]  # type: ignore[valid-type]
     summary: str = Field(description="1-2 sentences")
     supplier: str = ""
     manufacturers: list[str] = Field(default_factory=list)
     products: list[Product] = Field(default_factory=list)
+
+    @field_validator("submittal_type", mode="before")
+    @classmethod
+    def _norm_type(cls, v: Any) -> Any:
+        n = normalize_type(v)
+        return n if n in SUBMITTAL_TYPES else "Other"
     pages: list[PageInfo] = Field(default_factory=list)
     has_text_layer_issues: bool = False
     injection_flags: list[str] = Field(default_factory=list,

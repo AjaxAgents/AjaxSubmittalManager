@@ -136,8 +136,8 @@ def build_package(*, out_path: Path, submittal_path: Path, smap: SubmittalMap, c
             with pymupdf.open(cover_template["path"]) as tdoc:
                 doc.insert_pdf(tdoc, annots=True, widgets=True)
             n_tpl = doc.page_count - start
-            vals = ctpl.values_from({**info, "page_count": pno - 1 + len(order)})
-            tpl_notes = ctpl.fill(doc, n_tpl, cover_template.get("mapping") or {}, vals)
+            full = {**info, "page_count": pno - 1 + len(order)}
+            tpl_notes = ctpl.fill(doc, n_tpl, cover_template.get("mapping") or {}, ctpl.values_from(full), full)
             cv = {"pages": n_tpl, "stamp_page": 0, "stamp_y": None, "notes": tpl_notes}
             if cover_template.get("include_generated"):
                 g = gen.cover_sheet(doc, info)

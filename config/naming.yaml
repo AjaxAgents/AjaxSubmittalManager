@@ -7,12 +7,29 @@
 pattern: "{SpecSection} - {Seq:02d}.{Rev} {SpecTitle} - {TypeAbbr}"
 # Submittal number shown on the cover sheet / TXT ("08 71 00 - 01.0")
 number_pattern: "{SpecSection} - {Seq:02d}.{Rev}"
+# Submittal types (the dropdown list is in backend/asm/schemas.py SUBMITTAL_TYPES) -> {TypeAbbr}
 type_abbreviations:
   Product Data: PD
   Shop Drawings: SD
+  Product Data & Shop Drawings: PD-SD
   Product Data and Shop Drawings: PD-SD
   Samples: SMP
+  Calculations: CALC
+  Certificates: CERT
+  Test Reports: TR
+  Qualification Data: QD
+  Delegated Design: DD
+  Coordination Drawings: CD
+  Mock-ups: MU
+  Operation & Maintenance Data: OM
+  Warranty: WAR
+  Sustainable Design (LEED): LEED
+  Schedules: SCH
   Other: SUB
 review_notes_suffix: "_ReviewNotes"
 max_length: 150
 date_format: "%Y-%m-%d"
+# Dates written on cover pages (Date prepared, Date needed by)
+cover_date_format: "%m/%d/%Y"
+# "Date needed by" when the review form has no date: today + this many days (each cover field can override)
+needed_by_days: 14

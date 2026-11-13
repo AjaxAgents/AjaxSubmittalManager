@@ -7,6 +7,8 @@ export function CoverMapper({ file, onClose }: { file: LibraryFile; onClose: () 
   const toast = useToast();
   const [fields, setFields] = useState<CoverField[]>([]);
   const [tokens, setTokens] = useState<Record<string, string>>({});
+  const [groups, setGroups] = useState<[string, string[]][]>([]);
+  const [neededDays, setNeededDays] = useState(14);
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [includeGen, setIncludeGen] = useState(false);
   const [img, setImg] = useState("");
@@ -17,7 +19,7 @@ export function CoverMapper({ file, onClose }: { file: LibraryFile; onClose: () 
   const rowsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    api.cover(file.id).then((c) => { setFields(c.fields); setTokens(c.tokens); setMapping(c.mapping); setIncludeGen(c.include_generated); setErr(c.error); if (c.page_size?.length === 2) setPageSize(c.page_size); })
+    api.cover(file.id).then((c) => { setFields(c.fields); setTokens(c.tokens); setGroups(c.token_groups || []); if (c.needed_days) setNeededDays(c.needed_days); setMapping(c.mapping); setIncludeGen(c.include_generated); setErr(c.error); if (c.page_size?.length === 2) setPageSize(c.page_size); })
       .catch((e) => setErr(e.message));
   }, [file.id]);
 
@@ -49,7 +51,12 @@ export function CoverMapper({ file, onClose }: { file: LibraryFile; onClose: () 
     return { left: `${(x0 / w) * 100}%`, top: `${(y0 / h) * 100}%`, width: `${((x1 - x0) / w) * 100}%`, height: `${((y1 - y0) / h) * 100}%` };
   };
   const activeField = fields.find((f) => f.key === active);
-  const kindOf = (v: string) => v.startsWith("text:") ? "@custom" : v;
+  // stored mapping -> dropdown value ("RequiredDate+10" is the "Date needed by" choice with its own day count)
+  const kindOf = (v: string) => v.startsWith("text:") ? "@custom" : /^RequiredDate\+\d+$/.test(v) ? "RequiredDate" : v;
+  const daysOf = (v: string) => { const m = v.match(/^RequiredDate\+(\d+)$/); return m ? +m[1] : neededDays; };
+  const choose = (f: CoverField, v: string) => setMapping({ ...mapping, [f.key]: v === "@custom" ? "text:" : v === "RequiredDate" ? `RequiredDate+${neededDays}` : v });
+  const grouped = groups.length ? groups : [["Fill with", Object.keys(tokens)] as [string, string[]]];
+  const inGroups = new Set(grouped.flatMap(([, ks]) => ks));
 
   return (
     <Modal title={`Cover page: ${file.filename}`} onClose={onClose} wide
@@ -85,12 +92,22 @@ export function CoverMapper({ file, onClose }: { file: LibraryFile; onClose: () 
                 <b><span className="mapper-num">{i + 1}</span>{f.kind === "field" ? f.name : (f.current ? `"${f.current.slice(0, 40)}"` : "Empty text box")}</b>
                 <span className="muted tiny">{f.kind === "field" ? "Form field" : "Text box"}, page {f.page}</span>
               </div>
-              <select className="input input-sm" value={kindOf(val(f))} onChange={(e) => setMapping({ ...mapping, [f.key]: e.target.value === "@custom" ? "text:" : e.target.value })}>
+              <select className="input input-sm" value={kindOf(val(f))} onChange={(e) => choose(f, e.target.value)} aria-label={`Fill ${f.kind === "field" ? f.name : "text box"} with`}>
                 <option value="">Leave as is</option>
                 <option value="@template">Replace the {"{Tokens}"} it contains</option>
-                <optgroup label="Fill with">{Object.entries(tokens).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</optgroup>
+                {grouped.map(([g, ks]) => (
+                  <optgroup key={g} label={g}>{ks.filter((k) => tokens[k]).map((k) => <option key={k} value={k}>{tokens[k]}</option>)}</optgroup>
+                ))}
+                {Object.keys(tokens).some((k) => !inGroups.has(k)) && <optgroup label="Other">{Object.keys(tokens).filter((k) => !inGroups.has(k)).map((k) => <option key={k} value={k}>{tokens[k]}</option>)}</optgroup>}
                 <option value="@custom">Custom text with tokens...</option>
               </select>
+              {kindOf(val(f)) === "RequiredDate" && (
+                <label className="maprow-days">Today +
+                  <input className="input input-sm" type="number" min={0} max={365} value={daysOf(val(f))}
+                    onChange={(e) => setMapping({ ...mapping, [f.key]: `RequiredDate+${Math.max(0, Math.min(365, parseInt(e.target.value || "0", 10) || 0))}` })} />
+                  days <span className="muted tiny">(a date entered on the review form wins)</span>
+                </label>
+              )}
               {val(f).startsWith("text:") && (
                 <input className="input input-sm mono" placeholder="{SpecSection} {SpecTitle}" value={val(f).slice(5)} onChange={(e) => setMapping({ ...mapping, [f.key]: `text:${e.target.value}` })} />
               )}

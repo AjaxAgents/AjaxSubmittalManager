@@ -109,12 +109,41 @@ def scope_tree(project_id: str) -> list[dict[str, Any]]:
     return tree
 
 
+STOPWORDS = set("""about above after again against architect architectural building buildings chapter contractor
+contractors company copyright details detail document documents drawing drawings engineer engineering general
+information install installation installed issued level manufacturer manufacturers material materials notes
+number other owner owners page pages per plans please product products project projects provide provided
+required requirements revision revisions schedule section sections sheet sheets shall should specification
+specifications submit submittal submittals subcontractor supplier system systems their there these those under
+where which while with within without""".split())
+MAX_OPTIONAL = 30
+
+
+def _distinct_keywords(keywords: list[str], sheets: list[dict[str, Any]]) -> list[str]:
+    """Keep only words that say something about the product: not boilerplate, and not on most sheets."""
+    kws = []
+    for k in dict.fromkeys(w.lower() for w in keywords or []):
+        if len(k) < 5 or k in STOPWORDS or k.isdigit():
+            continue
+        kws.append(k)
+    if not sheets:
+        return kws
+    texts = [((sh.get("text") or "") + " " + sh.get("title", "")).lower() for sh in sheets]
+    limit = max(3, int(len(texts) * 0.08))
+    return [k for k in kws if sum(1 for t in texts if re.search(rf"\b{re.escape(k)}\b", t)) <= limit]
+
+
 def heuristic_scope(project_id: str, spec_section: str, keywords: list[str] | None = None) -> list[dict[str, Any]]:
-    """Cheap, deterministic starting scope used when no API key is set (and as a floor for the AI pass)."""
+    """Cheap, deterministic starting scope used when no API key is set (and as a floor for the AI pass).
+
+    Items the review clearly needs are returned selected. Weaker matches (drawing sheets that only share
+    product words with the submittal) come back with optional=True: shown to the reviewer, not ticked.
+    """
     sec_num = norm_section(spec_section)
     sid = f"S:{sec_num}"
     sec = db.get_catalog_item(project_id, sid)
     picks: dict[str, str] = {}
+    optional: dict[str, tuple[int, str]] = {}
     if sec:
         picks[sid] = "Designated specification section (locked)"
         for x in (sec.get("xrefs") or [])[:8]:
@@ -125,13 +154,20 @@ def heuristic_scope(project_id: str, spec_section: str, keywords: list[str] | No
     div01 = [c for c in db.list_catalog(project_id, ["spec_section"]) if c["number"].startswith("01 33")]
     for d in div01[:2]:
         picks.setdefault(d["id"], "Division 01 submittal procedures")
-    for sh in db.list_catalog(project_id, ["drawing_sheet"], with_text=True):
+    sheets = db.list_catalog(project_id, ["drawing_sheet"], with_text=True)
+    kws = _distinct_keywords(keywords or [], sheets)
+    for sh in sheets:
         txt = (sh.get("text") or "") + " " + sh.get("title", "")
         if sec_num in txt or sec_num.replace(" ", "") in txt:
             picks.setdefault(sh["id"], f"Sheet references {sec_num}")
-        elif keywords and any(re.search(rf"\b{re.escape(k)}\b", txt, re.I) for k in keywords if len(k) > 3):
-            picks.setdefault(sh["id"], "Sheet mentions submitted product")
+        elif kws:
+            hits = [k for k in kws if re.search(rf"\b{re.escape(k)}\b", txt, re.I)]
+            if hits:
+                optional[sh["id"]] = (len(hits), "Mentions " + ", ".join(hits[:3]))
         for am in sh.get("amended_by") or []:
             if sh["id"] in picks:
                 picks.setdefault(am, f"Amends {sh['number']}")
-    return [{"id": k, "reason": v, "locked": k == sid} for k, v in picks.items()]
+    out = [{"id": k, "reason": v, "locked": k == sid} for k, v in picks.items()]
+    ranked = sorted(((k, v) for k, v in optional.items() if k not in picks), key=lambda kv: -kv[1][0])[:MAX_OPTIONAL]
+    out += [{"id": k, "reason": r, "locked": False, "optional": True} for k, (_, r) in ranked]
+    return out

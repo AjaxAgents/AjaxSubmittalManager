@@ -27,7 +27,7 @@ export interface Job {
 }
 export interface JobBrief { id: string; status: string; created_at: number; cost: number; label: string; title: string; subcontractor: string; counts: Record<string, number>; extra_hr: number; mode: string }
 export interface Estimate { submittal_pages: number; library_pages: number; est_input_tokens: number; est_cost_low: number; est_cost_high: number; est_cost_mid: number; alt_mode_mid: number; usd_cap: number; mock: boolean; by_stage: Record<string, number> }
-export interface Sub { id: string; project_id: string; name: string; contact: string; email: string; phone: string; divisions: string[]; spec_sections: string[]; notes: string }
+export interface Sub { id: string; project_id: string; name: string; contact: string; email: string; phone: string; address?: string; city?: string; state?: string; zip?: string; divisions: string[]; spec_sections: string[]; notes: string }
 export interface Division { code: string; name: string; enabled: boolean; custom: boolean; sections: { number: string; title: string }[]; subcontractors: { id: string; name: string }[] }
 export interface Submittal {
   id: string; project_id: string; spec_section: string; seq: number; revision: string; title: string; type: string; spec_title: string;
@@ -94,7 +94,7 @@ export const api = {
   patchFile: (fid: string, b: { kind?: string; division?: string }) => fetch(`/api/library/${fid}`, json("PATCH", b)).then(j<LibraryFile>),
   deleteFile: (fid: string) => fetch(`/api/library/${fid}`, json("DELETE")).then(j<{ ok: boolean }>),
   setDefaults: (pid: string, d: { cover?: string; examples?: string[]; div01?: string[] }) => fetch(`/api/projects/${pid}/library/defaults`, json("PUT", d)).then(j<any>),
-  cover: (fid: string) => get<{ fields: CoverField[]; mapping: Record<string, string>; tokens: Record<string, string>; include_generated: boolean; page_size: number[]; error: string }>(`/api/library/${fid}/cover`),
+  cover: (fid: string) => get<{ fields: CoverField[]; mapping: Record<string, string>; tokens: Record<string, string>; token_groups?: [string, string[]][]; needed_days?: number; include_generated: boolean; page_size: number[]; error: string }>(`/api/library/${fid}/cover`),
   saveCover: (fid: string, mapping: Record<string, string>, include_generated: boolean) => fetch(`/api/library/${fid}/cover`, json("PUT", { mapping, include_generated })).then(j<any>),
   coverPreviewUrl: (fid: string) => `/api/library/${fid}/cover/preview`,
   tree: (pid: string) => get<TreeNode[]>(`/api/projects/${pid}/catalog/tree`),
@@ -104,8 +104,9 @@ export const api = {
   upload: (files: File[]) => fetch("/api/uploads", { method: "POST", credentials: "same-origin", body: form(files) })
     .then(j<{ files: Upload[]; errors: { filename: string; error: string }[] }>),
   autofill: (pid: string, upload_ids: string[]) => fetch(`/api/projects/${pid}/autofill`, json("POST", { upload_ids })).then(j<any>),
+  submittalTypes: () => fetch("/api/meta/submittal-types", { credentials: "same-origin" }).then(j<{ name: string; abbr: string }[]>),
   suggestScope: (pid: string, body: { spec_section: string; upload_ids: string[]; instructions: string; reset?: boolean }) =>
-    fetch(`/api/projects/${pid}/scope/suggest`, json("POST", body)).then(j<{ items: ScopeItem[]; mode: string; source: string; section: string; section_title: string; found: boolean }>),
+    fetch(`/api/projects/${pid}/scope/suggest`, json("POST", body)).then(j<{ items: ScopeItem[]; suggestions?: ScopeItem[]; mode: string; source: string; section: string; section_title: string; found: boolean }>),
   estimate: (pid: string, body: { upload_ids: string[]; scope_items: ScopeItem[]; review_mode?: string }) => fetch(`/api/projects/${pid}/estimate`, json("POST", body)).then(j<Estimate>),
   namingPreview: (pid: string, params: any, example_file_ids: string[]) =>
     fetch(`/api/projects/${pid}/naming/preview`, json("POST", { params, example_file_ids })).then(j<{ name: string; pattern: string; source: string; number: string }>),

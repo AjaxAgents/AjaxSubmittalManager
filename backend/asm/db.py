@@ -122,6 +122,11 @@ MIGRATIONS = [
     "ALTER TABLE library_files ADD COLUMN division TEXT DEFAULT ''",
     "ALTER TABLE jobs ADD COLUMN submittal_id TEXT DEFAULT ''",
     "ALTER TABLE uploads ADD COLUMN user_id TEXT DEFAULT ''",
+    "ALTER TABLE subcontractors ADD COLUMN address TEXT DEFAULT ''",
+    "ALTER TABLE subcontractors ADD COLUMN city TEXT DEFAULT ''",
+    "ALTER TABLE subcontractors ADD COLUMN state TEXT DEFAULT ''",
+    "ALTER TABLE subcontractors ADD COLUMN zip TEXT DEFAULT ''",
+    "UPDATE submittals SET type='Product Data & Shop Drawings' WHERE type='Product Data and Shop Drawings'",
 ]
 
 
@@ -514,7 +519,7 @@ def get_sub(sid: str) -> dict | None:
 
 
 def upsert_sub(project_id: str, data: dict, sid: str | None = None) -> dict:
-    cols = ["name", "contact", "email", "phone", "divisions", "spec_sections", "notes"]
+    cols = ["name", "contact", "email", "phone", "address", "city", "state", "zip", "divisions", "spec_sections", "notes"]
     vals = [json.dumps(data.get(k) or []) if k in ("divisions", "spec_sections") else (data.get(k) or "") for k in cols]
     with conn() as c:
         if sid:

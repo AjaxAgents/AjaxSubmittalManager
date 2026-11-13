@@ -196,7 +196,7 @@ export function SubmittalsPage({ project, initialFilter, onOpenRun, onNew }: { p
                         <td className="mono nowrap">{s.number}</td>
                         <td><div>{s.title || s.spec_title}</div><div className="muted tiny">{s.spec_section} {s.spec_title}</div></td>
                         <td className="small">{s.subcontractor || "-"}</td>
-                        <td className="small nowrap">{s.type.replace("Product Data and Shop Drawings", "PD + SD")}</td>
+                        <td className="small nowrap">{s.type.replace(/Product Data (and|&) Shop Drawings/, "PD + SD")}</td>
                         <td><Badge tone={stl.tone}>{stl.label}</Badge>{s.latest?.status === "done" && <div className="tiny muted">{s.latest.counts.non_compliant || 0} NC, {(s.latest.counts.human_review || 0) + (s.latest.extra_hr || 0)} to review</div>}</td>
                         <td className="small nowrap">{s.latest ? fmtDate(s.latest.updated_at) : "-"}</td>
                         <td className="w-act" onClick={(e) => e.stopPropagation()}>

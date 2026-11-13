@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type { ScopeItem, TreeNode } from "../api";
 import { Badge, Button, Icon } from "./ui";
 
@@ -12,7 +12,8 @@ function flatten(nodes: TreeNode[], depth = 0, path: string[] = [], parents: str
   }
   return out;
 }
-const selectable = (k: string) => ["spec_section", "spec_part", "spec_article", "drawing_sheet", "amendment", "document"].includes(k);
+const LEAF = ["spec_section", "drawing_sheet", "amendment", "document"];
+const natural = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 
 function parsePages(s: string, lo: number, hi: number): number[] | null {
   const out = new Set<number>();
@@ -25,136 +26,159 @@ function parsePages(s: string, lo: number, hi: number): number[] | null {
   return out.size ? Array.from(out).sort((a, b) => a - b) : null;
 }
 
+type View = "included" | "suggested" | "all" | "spec_section" | "drawing_sheet" | "amendment" | "document";
+
+/**
+ * Project information the review may read. One left-aligned list with views (included, suggested, by type);
+ * search covers everything, and "Select all" / "Deselect all" act on whatever the list is showing.
+ */
 export function ScopeSelector({
-  tree, items, onChange, mode, onMode, designated, loading, source, onReset, footer,
+  tree, items, suggestions = [], onChange, mode, onMode, designated, loading, source, onReset,
 }: {
-  tree: TreeNode[]; items: ScopeItem[]; onChange: (items: ScopeItem[]) => void; mode: string; onMode: (m: string) => void;
-  designated: string; loading?: boolean; source?: string; onReset?: () => void; footer?: React.ReactNode;
+  tree: TreeNode[]; items: ScopeItem[]; suggestions?: ScopeItem[]; onChange: (items: ScopeItem[]) => void; mode: string; onMode: (m: string) => void;
+  designated: string; loading?: boolean; source?: string; onReset?: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-  const [expanded, setExpanded] = useState<Set<string>>(new Set(["GROUP:SPECS", "GROUP:DWGS", "GROUP:AMEND", "GROUP:DOCS"]));
-  useEffect(() => {
-    if (designated) setExpanded((s) => new Set([...Array.from(s), `DIV:${designated.slice(2, 4)}`]));
-  }, [designated]);
+  const [view, setView] = useState<View>("included");
   const [editing, setEditing] = useState<string | null>(null);
   const [warn, setWarn] = useState("");
-  const panel = useRef<HTMLDivElement>(null);
   const flat = useMemo(() => flatten(tree), [tree]);
   const byId = useMemo(() => Object.fromEntries(flat.map((f) => [f.id, f])), [flat]);
+  const leaves = useMemo(() => flat.filter((f) => LEAF.includes(f.kind)).sort((a, b) => natural(a.number || a.label, b.number || b.label)), [flat]);
   const sel = useMemo(() => new Set(items.map((i) => i.id)), [items]);
+  const suggestedIds = useMemo(() => suggestions.map((s) => s.id).filter((id) => byId[id]), [suggestions, byId]);
+  const reasonOf = useMemo(() => Object.fromEntries([...suggestions, ...items].map((i) => [i.id, i.reason || ""])), [suggestions, items]);
+  const counts = useMemo(() => leaves.reduce<Record<string, number>>((c, l) => { c[l.kind] = (c[l.kind] || 0) + 1; return c; }, {}), [leaves]);
 
-  useEffect(() => {
-    const h = (e: MouseEvent) => { if (open && panel.current && !panel.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
-  }, [open]);
+  // typing searches everything; clearing the box goes back to what is included
+  useEffect(() => { if (q.trim() && (view === "included" || view === "suggested")) setView("all"); if (!q.trim() && view === "all") setView("included"); }, [q]);
 
-  const covered = (f: Flat) => f.parentIds.some((p) => sel.has(p));
-  const toggle = (f: Flat) => {
-    if (f.id === designated) return;
-    if (sel.has(f.id)) {
-      if (f.amended_by?.length) setWarn(`${f.number || f.label} is modified by ${f.amended_by.join(", ").replace(/AM:/g, "")} - the amendment may change the requirement.`);
-      onChange(items.filter((i) => i.id !== f.id));
-    } else {
-      const add: ScopeItem[] = [{ id: f.id, reason: "Added by reviewer" }];
-      for (const am of f.amended_by || []) if (!sel.has(am) && byId[am]) add.push({ id: am, reason: `Amends ${f.number}` });
-      onChange([...items.filter((i) => !(byId[i.id]?.parentIds || []).includes(f.id)), ...add]);
-      setWarn("");
-    }
-  };
-
+  const pagesOf = (i: ScopeItem) => i.pages?.length || byId[i.id]?.pages || 0;
+  const totalPages = items.reduce((s, i) => s + pagesOf(i), 0);
   const ql = q.trim().toLowerCase();
-  const visible = flat.filter((f) => {
-    if (ql) return selectable(f.kind) && `${f.label} ${f.number || ""}`.toLowerCase().includes(ql);
-    return f.parentIds.every((p) => expanded.has(p));
-  });
+  const match = (n: Flat) => !ql || `${n.number || ""} ${n.title || ""} ${n.label}`.toLowerCase().includes(ql);
 
-  const total = items.reduce((s, i) => s + (i.pages?.length || byId[i.id]?.pages || 0), 0);
+  const shown: Flat[] = useMemo(() => {
+    let rows: Flat[];
+    if (view === "included") {
+      rows = items.map((i) => byId[i.id]).filter(Boolean);
+      rows.sort((a, b) => (a.id === designated ? -1 : b.id === designated ? 1 : natural(a.number || a.label, b.number || b.label)));
+    } else if (view === "suggested") rows = suggestedIds.map((id) => byId[id]);
+    else if (view === "all") rows = leaves;
+    else rows = leaves.filter((l) => l.kind === view);
+    return rows.filter(match);
+  }, [view, items, suggestedIds, leaves, ql, byId, designated]);
+
+  const withAmendments = (ids: string[]): ScopeItem[] => {
+    const add: ScopeItem[] = [];
+    const have = new Set(sel);
+    for (const id of ids) {
+      if (have.has(id)) continue;
+      add.push({ id, reason: reasonOf[id] || "Added by reviewer" }); have.add(id);
+      for (const am of byId[id]?.amended_by || []) if (!have.has(am) && byId[am]) { add.push({ id: am, reason: `Amends ${byId[id].number || byId[id].label}` }); have.add(am); }
+    }
+    return add;
+  };
+  const toggle = (n: Flat) => {
+    if (n.id === designated) return;
+    if (sel.has(n.id)) {
+      if (n.amended_by?.length) setWarn(`${n.number || n.label} is modified by ${n.amended_by.join(", ").replace(/AM:/g, "")}. The amendment stays included.`);
+      onChange(items.filter((i) => i.id !== n.id));
+      if (editing === n.id) setEditing(null);
+    } else { onChange([...items, ...withAmendments([n.id])]); setWarn(""); }
+  };
+  const selectable = shown.filter((n) => n.id !== designated);
+  const nOn = selectable.filter((n) => sel.has(n.id)).length;
+  const selectAll = () => { onChange([...items, ...withAmendments(selectable.map((n) => n.id))]); setWarn(""); };
+  const deselectAll = () => { const drop = new Set(selectable.map((n) => n.id)); onChange(items.filter((i) => !drop.has(i.id))); setEditing(null); };
+
+  const views: [View, string, number][] = [
+    ["included", "Included", items.length], ["suggested", "Suggested", suggestedIds.filter((id) => !sel.has(id)).length],
+    ["spec_section", "Specifications", counts.spec_section || 0], ["drawing_sheet", "Drawings", counts.drawing_sheet || 0],
+    ["amendment", "Amendments", counts.amendment || 0], ["document", "Documents", counts.document || 0],
+  ];
+  const label = view === "all" ? `Matches for "${q.trim()}"` : views.find(([v]) => v === view)?.[1] || "";
+  const kindLabel: Record<string, string> = { spec_section: "Spec", drawing_sheet: "Sheet", amendment: "Amendment", document: "Document", spec_part: "Part", spec_article: "Article" };
   const editingNode = editing ? byId[editing] : null;
   const editingItem = editing ? items.find((i) => i.id === editing) : null;
 
   return (
-    <div className="scope">
-      <div className="scope-bar">
-        <div className="scope-pick" ref={panel}>
-          <button className={`scope-trigger ${open ? "is-open" : ""}`} onClick={() => setOpen(!open)} aria-expanded={open}>
-            <Icon name="search" size={16} />
-            <span>{items.length ? `Add or remove references (${items.length} selected, ${total} pages)` : "Search spec sections, articles, drawing sheets..."}</span>
-            <Icon name="chevron" size={16} className={open ? "rot90" : ""} />
-          </button>
-          {open && (
-            <div className="scope-panel">
-              <div className="scope-search">
-                <Icon name="search" size={15} />
-                <input autoFocus placeholder='Filter by number, title or keyword ("closer", "A-501")' value={q} onChange={(e) => setQ(e.target.value)} />
-              </div>
-              <div className="scope-tree">
-                {!tree.length && <p className="muted pad">The project library is empty. Add specs and drawings in zone 2.</p>}
-                {visible.map((f) => {
-                  const hasKids = f.children?.length > 0;
-                  const isOpen = expanded.has(f.id) || !!ql;
-                  const can = selectable(f.kind);
-                  const implied = covered(f);
-                  return (
-                    <div key={f.id} className={`tn tn-${f.kind}`} style={{ paddingLeft: 8 + (ql ? 0 : f.depth * 16) }}>
-                      {hasKids && !ql ? (
-                        <button className="tn-caret" onClick={() => setExpanded((s) => { const n = new Set(s); n.has(f.id) ? n.delete(f.id) : n.add(f.id); return n; })} aria-label="Expand">
-                          <Icon name="chevron" size={14} className={isOpen ? "rot90" : ""} />
-                        </button>
-                      ) : <span className="tn-caret" />}
-                      {can ? (
-                        <label className="tn-label">
-                          <input type="checkbox" checked={sel.has(f.id) || implied} disabled={implied || f.id === designated} onChange={() => toggle(f)} />
-                          <span className={f.kind === "spec_section" || f.kind === "drawing_sheet" ? "mono-num" : ""}>{f.label}</span>
-                          {f.id === designated && <Icon name="lock" size={13} className="muted" />}
-                          {!!f.amended_by?.length && <Badge tone="warn" title={`Amended by ${f.amended_by.join(", ")}`}>amended</Badge>}
-                          {f.pages ? <span className="tn-pages">{f.pages} pp</span> : null}
-                        </label>
-                      ) : <span className="tn-group">{f.label}</span>}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+    <div className="scope2">
+      <div className="scope2-bar">
+        <div className="search scope2-search">
+          <Icon name="search" size={15} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder='Search all project information: number, title or keyword ("concrete", "S-301")' aria-label="Search project information" />
+          {q && <button className="icon-btn" aria-label="Clear search" onClick={() => setQ("")}><Icon name="x" size={14} /></button>}
         </div>
-        <div className="seg" role="radiogroup" aria-label="Scope mode">
+        <div className="seg" role="radiogroup" aria-label="Reference scope">
           {["flexible", "strict"].map((m) => (
             <button key={m} role="radio" aria-checked={mode === m} className={mode === m ? "on" : ""} onClick={() => onMode(m)}
-              title={m === "flexible" ? "Selected items, plus up to 20 extra pages agents request (each logged)" : "Selected items only; anything else becomes a Human Review item"}>
+              title={m === "flexible" ? "Included items, plus up to 20 extra pages the reviewer asks for (each one logged)" : "Included items only; anything else becomes a Human Review item"}>
               {m === "flexible" ? "Flexible" : "Strict"}
             </button>
           ))}
         </div>
       </div>
 
-      {loading && <p className="muted small"><span className="spinner spinner-brand" /> Suggesting reference scope from the catalog…</p>}
+      <div className="pills" role="radiogroup" aria-label="Show">
+        {views.map(([v, l, n]) => (
+          <button key={v} role="radio" aria-checked={view === v} className={`pill ${view === v ? "on" : ""}`} onClick={() => setView(v)} disabled={v !== "included" && v !== "suggested" && !n}>
+            {l}<span className="pill-n">{n}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="scope2-head">
+        <span><b>{label}</b> <span className="muted">{shown.length} item{shown.length === 1 ? "" : "s"}{view !== "included" && shown.length ? `, ${nOn} included` : ""}</span></span>
+        <span className="grow" />
+        {selectable.length > 0 && nOn < selectable.length && <Button size="sm" variant="ghost" icon="check" onClick={selectAll}>{view === "suggested" ? "Include all" : "Select all"}{selectable.length - nOn > 1 ? ` (${selectable.length - nOn})` : ""}</Button>}
+        {nOn > 0 && <Button size="sm" variant="ghost" icon="x" onClick={deselectAll}>{view === "included" && !ql ? "Remove all" : "Deselect all"}</Button>}
+      </div>
+
+      {loading && <p className="muted small"><span className="spinner spinner-brand" /> Finding related references in the project library…</p>}
       {warn && <p className="scope-warn"><Icon name="alert" size={15} /> {warn}</p>}
 
-      <div className="scope-chips">
-        {items.map((i) => {
-          const n = byId[i.id];
-          const pages = i.pages?.length || n?.pages || 0;
+      <div className="scope2-list" role="list">
+        {shown.map((n) => {
+          const on = sel.has(n.id);
+          const lock = n.id === designated;
+          const item = items.find((i) => i.id === n.id);
+          const reason = reasonOf[n.id];
           return (
-            <span key={i.id} className={`schip ${i.id === designated ? "schip-lock" : ""} ${editing === i.id ? "schip-active" : ""}`} title={i.reason || ""}>
-              <button className="schip-main" onClick={() => setEditing(editing === i.id ? null : i.id)}>
-                {i.id === designated && <Icon name="lock" size={12} />}
-                <span className="mono-num">{n ? (n.kind === "spec_article" || n.kind === "spec_part" ? `${n.number}` : n.number || n.label) : i.id.split(":").slice(1).join(":")}</span>
-                <span className="schip-title">{n?.title || ""}</span>
-                <span className="schip-pages">{pages}pp{i.pages?.length ? "*" : ""}</span>
-              </button>
-              {i.id !== designated && <button className="schip-x" aria-label="Remove" onClick={() => n ? toggle(n) : onChange(items.filter((x) => x.id !== i.id))}><Icon name="x" size={12} /></button>}
-            </span>
+            <div key={n.id} role="listitem" className={`srow ${on ? "on" : ""} ${editing === n.id ? "editing" : ""}`}>
+              <label className="srow-main">
+                <input type="checkbox" checked={on} disabled={lock} onChange={() => toggle(n)} aria-label={`${on ? "Remove" : "Include"} ${n.number || ""} ${n.title || n.label}`} />
+                <span className="srow-num">{lock ? <Icon name="lock" size={12} /> : null}{n.number || ""}</span>
+                <span className="srow-title">
+                  <span className="srow-t">{n.title || n.label}</span>
+                  {(reason || view === "all") && <span className="srow-why">{view === "all" || view === "included" ? <span className="srow-kind">{kindLabel[n.kind] || ""}</span> : null}{reason}</span>}
+                </span>
+              </label>
+              {!!n.amended_by?.length && <Badge tone="warn" title={`Amended by ${n.amended_by.join(", ")}`}>amended</Badge>}
+              {on && n.page_start ? (
+                <button className="srow-pp" onClick={() => setEditing(editing === n.id ? null : n.id)} title="Choose which pages to include">
+                  {item ? pagesOf(item) : n.pages} pp{item?.pages?.length ? "*" : ""}
+                </button>
+              ) : <span className="srow-pp muted">{n.pages ? `${n.pages} pp` : ""}</span>}
+            </div>
           );
         })}
-        {source && <span className="scope-src">{source === "preset" ? "Saved references for this section" : "Suggested from the project catalog"}{onReset && source === "preset" && <> · <button className="link-btn" onClick={onReset}>Reset to suggested</button></>}</span>}
+        {!shown.length && !loading && (
+          <p className="empty small">
+            {view === "included" ? "Nothing included yet. Search above or open Suggested." : view === "suggested" ? "No other suggestions for this submittal." : ql ? `Nothing matches "${q.trim()}".` : "Nothing here."}
+          </p>
+        )}
       </div>
 
       {editingNode && editingItem && editingNode.page_start && (
         <PageTrim node={editingNode} item={editingItem} onSave={(pages) => { onChange(items.map((x) => x.id === editingItem.id ? { ...x, pages } : x)); }} onClose={() => setEditing(null)} />
       )}
-      {footer}
+
+      <p className="scope2-foot muted small">
+        Included: <b>{items.length}</b> item{items.length === 1 ? "" : "s"}, <b>{totalPages}</b> pages.
+        {source && <> {source === "preset" ? "Saved references for this section." : "Suggested from the project library."}</>}
+        {onReset && <> <button className="link-btn" onClick={onReset}>Suggest again</button></>}
+      </p>
     </div>
   );
 }
@@ -163,12 +187,12 @@ function PageTrim({ node, item, onSave, onClose }: { node: Flat; item: ScopeItem
   const lo = node.page_start || 1, hi = node.page_end || lo;
   const all = Array.from({ length: Math.min(hi - lo + 1, 40) }, (_, k) => lo + k);
   const current = new Set(item.pages || all);
-  const [txt, setTxt] = useState(item.pages ? "" : "");
+  const [txt, setTxt] = useState("");
   const set = (p: number[]) => onSave(p.length === all.length ? null : p);
   return (
     <div className="trim">
       <div className="trim-head">
-        <b>{node.label}</b><span className="muted"> · source pages {lo}-{hi}. Untick pages to exclude them.</span>
+        <b>{node.number} {node.title || node.label}</b><span className="muted"> source pages {lo}-{hi}. Untick pages to leave them out.</span>
         <span className="grow" />
         <input className="input input-sm mono" placeholder="e.g. 4-9, 12" value={txt} onChange={(e) => setTxt(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") { const p = parsePages(txt, lo, hi); if (p) set(p); } }} />

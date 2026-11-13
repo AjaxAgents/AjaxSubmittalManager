@@ -133,6 +133,8 @@ def test_library_workflow_and_review(data, demo, tmp_path):
         assert af["spec_section"] == "08 71 00" and af["subcontractor"] == "Northside Door Supply" and af["next_seq"] == 1
 
         scope = c.post(f"/api/projects/{pid}/scope/suggest", json={"spec_section": "08 71 00", "upload_ids": [u["id"]]}).json()
+        assert "suggestions" in scope and all(s.get("optional") for s in scope["suggestions"])
+        assert not any(i.get("optional") for i in scope["items"])
         job = c.post(f"/api/projects/{pid}/jobs", json={
             "spec_section": "08 71 00", "submittal_no": "1", "subcontractor_id": sub["id"], "uploads": {"submittal": [u["id"]]},
             "library_refs": {"examples": [ex["id"]], "div01": [d1["id"]], "cover": cv["id"]},
@@ -182,3 +184,11 @@ def test_cancel_processing(data, demo):
         assert row["status"] == "uploaded" and c.get(f"/api/projects/{pid}/library").json()["summary"]["sections"] == 0
         # a normal run afterwards still works
         assert ingest.ingest_file(pid, f["id"], use_ai=False)["kind"] == "spec"
+
+
+def test_scope_keywords_ignore_boilerplate():
+    from asm.library.catalog import _distinct_keywords
+    sheets = [{"title": f"Power plan {i}", "text": "general notes project building electrical"} for i in range(40)]
+    sheets.append({"title": "Storefront details", "text": "aluminum storefront glazing sealant"})
+    kws = _distinct_keywords(["Project", "Building", "Electrical", "Storefront", "Glazing", "Submittal"], sheets)
+    assert kws == ["storefront", "glazing"]  # boilerplate and words on most sheets are dropped

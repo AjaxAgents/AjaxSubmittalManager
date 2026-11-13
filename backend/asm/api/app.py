@@ -11,6 +11,7 @@ import logging
 import os
 import platform
 import re
+from collections import Counter
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -29,6 +30,7 @@ from .. import __version__, auth, db, pipeline
 from ..config import (FRONTEND_DIST, data_dir, mock_mode, models_cfg, outputs_dir, reload_all, save_overrides,
                       settings_cfg)
 from ..library import catalog as cat
+from ..schemas import SUBMITTAL_TYPES, normalize_type
 from ..library.ingest import DIVISIONS, ingest_file, norm_section, relink_amendments, request_cancel, CANCELLED
 from ..outputs import naming
 from ..pdf import cover_template as ctpl
@@ -457,9 +459,19 @@ class SubIn(BaseModel):
     contact: str = ""
     email: str = ""
     phone: str = ""
+    address: str = ""
+    city: str = ""
+    state: str = ""
+    zip: str = ""
     divisions: list[str] = []
     spec_sections: list[str] = []
     notes: str = ""
+
+
+@app.get("/api/meta/submittal-types")
+def submittal_types() -> list[dict]:
+    ab = naming.naming_cfg().get("type_abbreviations") or {}
+    return [{"name": t, "abbr": ab.get(t, "")} for t in SUBMITTAL_TYPES]
 
 
 @app.get("/api/projects/{pid}/subcontractors")
@@ -692,6 +704,7 @@ def cover_get(fid: str) -> dict:
     with pymupdf.open(f["path"]) as d:
         w, h = d[0].rect.width, d[0].rect.height
     return {"fields": meta.get("fields") or [], "mapping": meta.get("mapping") or {}, "tokens": ctpl.TOKENS,
+            "token_groups": ctpl.TOKEN_GROUPS, "needed_days": naming.naming_cfg().get("needed_by_days", 14),
             "include_generated": bool(meta.get("include_generated")), "page_size": [w, h],
             "placeholders_in_page_text": bool(meta.get("placeholders_in_page_text")), "error": meta.get("error", "")}
 
@@ -724,14 +737,19 @@ def cover_preview(fid: str, body: dict) -> Response:
             "spec_section": params.get("spec_section") or "08 71 00", "spec_title": params.get("spec_title") or "Door Hardware",
             "revision": params.get("revision") or "0", "submittal_type": params.get("submittal_type") or "Product Data",
             "type_abbr": naming.tokens(params, p).get("TypeAbbr", "PD"), "title": params.get("title") or "",
-            "supplier": params.get("supplier") or "Subcontractor", "date_prepared": date.today().strftime(naming.naming_cfg().get("date_format", "%Y-%m-%d")),
+            "supplier": params.get("supplier") or "Northside Door Supply", "date_prepared": date.today(),
             "required_date": params.get("required_date") or "", "deviations_statement": "No deviations.",
             "items": [{"label": "Product data", "page": 3}], "prepared_by": me().get("display_name", ""),
-            "seq": naming.parse_seq(params.get("submittal_no", ""), params.get("spec_section", ""))[0]}
+            "seq": naming.parse_seq(params.get("submittal_no", ""), params.get("spec_section", ""))[0],
+            "date_format": naming.naming_cfg().get("cover_date_format", "%m/%d/%Y"),
+            "needed_days": naming.naming_cfg().get("needed_by_days", 14),
+            "sub": {"address": "1250 Industrial Blvd", "city": "Hickory", "state": "NC", "zip": "28601",
+                    "contact": "Pat Smith", "phone": "(828) 555-0142", "email": "pat@example.com"}}
     doc = pymupdf.open()
     with pymupdf.open(f["path"]) as t:
         doc.insert_pdf(t, from_page=0, to_page=0, annots=True, widgets=True)
-    ctpl.fill(doc, 1, body.get("mapping") or meta.get("mapping") or {}, ctpl.values_from({**info, "page_count": 12}))
+    full = {**info, "page_count": 12}
+    ctpl.fill(doc, 1, body.get("mapping") or meta.get("mapping") or {}, ctpl.values_from(full), full)
     png = render_png(doc, 0, dpi=80, max_px=1400, annots=True)
     doc.close()
     return Response(png, media_type="image/png")
@@ -860,7 +878,7 @@ async def scope_suggest(pid: str, body: ScopeIn) -> dict:
     sec = db.get_catalog_item(pid, f"S:{sec_num}")
     preset = None if body.reset else db.get_scope_preset(pid, sec_num)
     if preset:
-        return {"items": preset.get("items", []), "mode": preset.get("mode"), "source": "preset",
+        return {"items": preset.get("items", []), "suggestions": [], "mode": preset.get("mode"), "source": "preset",
                 "section": sec_num, "section_title": (sec or {}).get("title", ""), "found": bool(sec)}
     text = ""
     for uid in body.upload_ids[:3]:
@@ -868,8 +886,11 @@ async def scope_suggest(pid: str, body: ScopeIn) -> dict:
         if u:
             with pymupdf.open(u["path"]) as d:
                 text += "\n".join(d[i].get_text("text") for i in range(min(3, d.page_count)))
-    kw = [w for w in re.findall(r"[A-Za-z]{5,}", text)][:40]
-    items = cat.heuristic_scope(pid, sec_num, kw)
+    words = Counter(w.lower() for w in re.findall(r"[A-Za-z]{5,}", text) if w.lower() not in cat.STOPWORDS)
+    kw = [w for w, _ in words.most_common(40)]
+    found = cat.heuristic_scope(pid, sec_num, kw)
+    items = [i for i in found if not i.get("optional")]
+    suggestions = [i for i in found if i.get("optional")]
     source = "heuristic"
     if auth.api_key_for_project(pid) and not mock_mode() and db.list_catalog(pid, ["spec_section"]):
         try:
@@ -880,10 +901,11 @@ async def scope_suggest(pid: str, body: ScopeIn) -> dict:
                 if db.get_catalog_item(pid, s.item_id) and s.item_id not in have:
                     items.append({"id": s.item_id, "reason": s.reason, "locked": False})
                     have.add(s.item_id)
+            suggestions = [x for x in suggestions if x["id"] not in have]
             source = "smart"
         except Exception as exc:
             log.warning("scope suggestion failed: %s", exc)
-    return {"items": items, "mode": settings_cfg().get("scope", {}).get("default_mode", "flexible"),
+    return {"items": items, "suggestions": suggestions, "mode": settings_cfg().get("scope", {}).get("default_mode", "flexible"),
             "source": source, "section": sec_num, "section_title": (sec or {}).get("title", ""), "found": bool(sec)}
 
 
@@ -1020,6 +1042,7 @@ async def create_job(pid: str, body: JobIn) -> dict:
         raise HTTPException(400, "No Anthropic API key is set. Add yours in Settings.")
     params = body.model_dump()
     params["spec_section"] = norm_section(params["spec_section"])
+    params["submittal_type"] = normalize_type(params.get("submittal_type")) or "Product Data"
     params["_prepared_by"] = me().get("display_name") or me()["username"]
     # subcontractor: pick existing, or create it on the fly (tagged with this division)
     sub_id = body.subcontractor_id
@@ -1031,11 +1054,12 @@ async def create_job(pid: str, body: JobIn) -> dict:
     if sub_id:
         s = db.get_sub(sub_id)
         params["supplier"] = (s or {}).get("name", body.supplier)
+    params["subcontractor_id"] = sub_id
     seq = naming.parse_seq(body.submittal_no, params["spec_section"])[0]
     rev = (body.revision or "0").strip() or "0"
     sm = db.find_submittal(pid, params["spec_section"], seq, rev)
     data = {"spec_section": params["spec_section"], "seq": seq, "revision": rev, "title": body.title,
-            "type": body.submittal_type, "spec_title": body.spec_title, "subcontractor_id": sub_id,
+            "type": params["submittal_type"], "spec_title": body.spec_title, "subcontractor_id": sub_id,
             "required_date": body.required_date, "created_by": me()["id"],
             "options": {"library_refs": body.library_refs, "review_mode": body.review_mode}}
     if sm:
