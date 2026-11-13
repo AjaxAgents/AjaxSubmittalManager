@@ -27,6 +27,10 @@ a = Analysis(
     excludes=["pytest", "IPython", "matplotlib", "numpy", "scipy", "pandas", "PIL", "cv2", "torch", "playwright", "notebook", "jupyter_client"],
     noarchive=False,
 )
+# pyinstaller-hooks-contrib >= 2026.10 collects every pymupdf data file, including ~45 MB of ONNX
+# layout/table models (pymupdf.layout) this app never uses. Keep them out of the exe.
+_UNUSED = ("pymupdf/layout/", "pymupdf4llm/")
+a.datas = [d for d in a.datas if not any(u in d[0].replace("\\", "/") for u in _UNUSED)]
 pyz = PYZ(a.pure)
 common = dict(name="AjaxSubmittalManager", debug=False, strip=False, upx=False, console=False,
               icon=os.path.join(SPECPATH, "asm.ico"))
