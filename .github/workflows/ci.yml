@@ -46,6 +46,12 @@ jobs:
           pip install -r backend/requirements.txt pyinstaller
       - name: Build single-file exe
         run: pyinstaller packaging/AjaxSubmittalManager.spec --noconfirm --distpath dist
+      - name: Exe size guard
+        shell: pwsh
+        run: |
+          $mb = [math]::Round((Get-Item dist\AjaxSubmittalManager.exe).Length / 1MB, 1)
+          Write-Host "AjaxSubmittalManager.exe: $mb MB"
+          if ($mb -gt 65) { Write-Error "exe is $mb MB (limit 65). Check what PyInstaller bundled."; exit 1 }
       - name: Self-test the exe (starts server, checks API + UI, exits)
         shell: pwsh
         run: |
