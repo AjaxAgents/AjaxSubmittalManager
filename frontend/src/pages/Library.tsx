@@ -333,18 +333,19 @@ function DivisionsTab({ project }: { project: Project }) {
       <section className="panel">
         <h3 className="panel-title">Subcontractors <Button size="sm" icon="plus" onClick={() => setEdit({ name: "", divisions: [] })}>Add subcontractor</Button></h3>
         <table className="matrix compact">
-          <thead><tr><th>Company</th><th>Divisions</th><th>Contact</th><th /></tr></thead>
+          <thead><tr><th>Company</th><th>Divisions</th><th>Contact</th><th>Location</th><th /></tr></thead>
           <tbody>
             {subs.map((s) => (
               <tr key={s.id}>
                 <td><b>{s.name}</b></td>
                 <td>{(s.divisions || []).map((d) => <span key={d} className="kwc mono">{d}</span>)}</td>
                 <td className="small">{s.contact}{s.email && <div className="muted tiny">{s.email}</div>}</td>
+                <td className="small">{s.address}{(s.city || s.state || s.zip) && <div className="muted tiny">{[s.city, [s.state, s.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ")}</div>}</td>
                 <td className="w-act"><Button size="sm" variant="ghost" onClick={() => setEdit(s)}>Edit</Button>
                   <button className="icon-btn" aria-label="Delete" onClick={() => { if (confirm(`Delete ${s.name}?`)) api.deleteSub(project.id, s.id).then(load); }}><Icon name="trash" size={15} /></button></td>
               </tr>
             ))}
-            {!subs.length && <tr><td colSpan={4} className="empty">No subcontractors yet. They are also added automatically when you run a review for a new one.</td></tr>}
+            {!subs.length && <tr><td colSpan={5} className="empty">No subcontractors yet. They are also added automatically when you run a review for a new one.</td></tr>}
           </tbody>
         </table>
       </section>
@@ -356,6 +357,12 @@ function DivisionsTab({ project }: { project: Project }) {
             <Field label="Contact"><input className="input" value={edit.contact || ""} onChange={(e) => setEdit({ ...edit, contact: e.target.value })} /></Field>
             <Field label="Email"><input className="input" value={edit.email || ""} onChange={(e) => setEdit({ ...edit, email: e.target.value })} /></Field>
             <Field label="Phone"><input className="input" value={edit.phone || ""} onChange={(e) => setEdit({ ...edit, phone: e.target.value })} /></Field>
+          </div>
+          <Field label="Street address"><input className="input" value={edit.address || ""} autoComplete="off" placeholder="1250 Industrial Blvd" onChange={(e) => setEdit({ ...edit, address: e.target.value })} /></Field>
+          <div className="addr-row">
+            <Field label="City"><input className="input" value={edit.city || ""} autoComplete="off" placeholder="Hickory" onChange={(e) => setEdit({ ...edit, city: e.target.value })} /></Field>
+            <Field label="State"><input className="input" value={edit.state || ""} autoComplete="off" placeholder="NC" maxLength={2} onChange={(e) => setEdit({ ...edit, state: e.target.value.toUpperCase() })} /></Field>
+            <Field label="ZIP"><input className="input" value={edit.zip || ""} autoComplete="off" placeholder="28601" inputMode="numeric" maxLength={10} onChange={(e) => setEdit({ ...edit, zip: e.target.value })} /></Field>
           </div>
           <Field label="Divisions they submit for">
             <div className="divpick">

@@ -5,7 +5,7 @@ import { Combobox, FilePicker, Opt } from "../components/Pickers";
 import { ScopeSelector } from "../components/ScopeSelector";
 import { Badge, Button, Field, Icon, useToast } from "../components/ui";
 
-const TYPES = ["Product Data", "Shop Drawings", "Product Data and Shop Drawings", "Other"];
+const FALLBACK_TYPES = ["Product Data", "Shop Drawings", "Product Data & Shop Drawings", "Samples", "Calculations", "Other"];
 const normSec = (s: string) => { const d = s.replace(/\D/g, ""); return d.length >= 6 ? `${d.slice(0, 2)} ${d.slice(2, 4)} ${d.slice(4, 6)}` : ""; };
 
 function useDebounced<T>(v: T, ms = 450): T {
@@ -37,7 +37,9 @@ export function NewReview({ project, tree, library, defaults, subs, onSubsChange
   const [scopeSrc, setScopeSrc] = useState("");
   const [scopeDirty, setScopeDirty] = useState(false);
   const [scopeLoading, setScopeLoading] = useState(false);
-  const [scopeOpen, setScopeOpen] = useState(false);
+  const [suggestions, setSuggestions] = useState<ScopeItem[]>([]);
+  const [types, setTypes] = useState<string[]>(FALLBACK_TYPES);
+  useEffect(() => { api.submittalTypes().then((t) => t.length && setTypes(t.map((x) => x.name))).catch(() => {}); }, []);
   const [moreOpen, setMoreOpen] = useState(false);
   const [sections, setSections] = useState<{ number: string; title: string; division: string }[]>([]);
   const [examples, setExamples] = useState<string[]>(defaults?.examples || []);
@@ -126,7 +128,7 @@ export function NewReview({ project, tree, library, defaults, subs, onSubsChange
       const r = await api.suggestScope(project.id, { spec_section: dSec, upload_ids: subIds, instructions, reset });
       let items = r.items;
       if (!items.some((i) => i.id === `S:${dSec}`) && r.found) items = [{ id: `S:${dSec}`, locked: true, reason: "Designated section" }, ...items];
-      setScope(items); setScopeSrc(r.source); if (r.mode) setScopeMode(r.mode); setScopeDirty(false);
+      setScope(items); setSuggestions(r.suggestions || []); setScopeSrc(r.source); if (r.mode) setScopeMode(r.mode); setScopeDirty(false);
     } catch (e: any) { toast(`Reference suggestion failed: ${e.message}`, "bad"); } finally { setScopeLoading(false); }
   };
   useEffect(() => { if (dSec && !scopeDirty) suggest(); }, [dSec, project.library.sections, subIds.length]);
@@ -163,7 +165,6 @@ export function NewReview({ project, tree, library, defaults, subs, onSubsChange
   };
 
   const totalPages = files.reduce((s, u) => s + u.pages, 0);
-  const scopePages = scope.length;
   const pendingLib = project.library.unprocessed + project.library.processing;
 
   return (
@@ -218,7 +219,7 @@ export function NewReview({ project, tree, library, defaults, subs, onSubsChange
           <div><dt>Spec section</dt><dd className="mono">{secNorm || "\u2014"}</dd></div>
           <div><dt>Number</dt><dd className="mono">{preview?.number?.split(" - ").pop() || "\u2014"}</dd></div>
           <div className="tb-wide"><dt>Subcontractor</dt><dd>{subName || "\u2014"}</dd></div>
-          <div><dt>Type</dt><dd>{form.submittal_type.replace("Product Data and Shop Drawings", "PD + SD")}</dd></div>
+          <div><dt>Type</dt><dd>{form.submittal_type.replace(/Product Data (and|&) Shop Drawings/, "PD + SD")}</dd></div>
           <div><dt>Pages</dt><dd className="mono">{totalPages || "\u2014"}</dd></div>
         </dl>
       </section>
@@ -242,7 +243,7 @@ export function NewReview({ project, tree, library, defaults, subs, onSubsChange
           <Field label="Submittal no." className="c3"><input className="input mono" value={form.submittal_no} onChange={(e) => { seqTouched.current = true; set("submittal_no", e.target.value); }} placeholder="01" /></Field>
           <Field label="Revision" className="c3"><input className="input mono" value={form.revision} onChange={(e) => set("revision", e.target.value)} /></Field>
           <Field label="Type" className="c4">
-            <select className="input" value={form.submittal_type} onChange={(e) => set("submittal_type", e.target.value)}>{TYPES.map((t) => <option key={t}>{t}</option>)}</select>
+            <select className="input" value={form.submittal_type} onChange={(e) => set("submittal_type", e.target.value)}>{(types.includes(form.submittal_type) ? types : [...types, form.submittal_type]).map((t) => <option key={t}>{t}</option>)}</select>
           </Field>
           <Field label="Title / description" className="c8"><input className="input" value={form.title} onChange={(e) => set("title", e.target.value)} placeholder="e.g. Door Hardware - Sets 1-4" /></Field>
           <Field label="Review requested by" className="c4"><input className="input" type="date" value={form.required_date} onChange={(e) => set("required_date", e.target.value)} /></Field>
@@ -253,20 +254,13 @@ export function NewReview({ project, tree, library, defaults, subs, onSubsChange
       <section className="panel">
         <h3 className="panel-title">Reference materials <button className="link-btn small" onClick={() => goLibrary("info")}>Manage in Project Library</button></h3>
         {pendingLib > 0 && <p className="note-warn"><Icon name="alert" size={15} /> {pendingLib} project file{pendingLib > 1 ? "s are" : " is"} not processed yet, so {pendingLib > 1 ? "they" : "it"} can't be referenced. <button className="link-btn" onClick={() => goLibrary("info")}>Process in Project Library</button></p>}
-        <div className="refrow">
-          <div className="refrow-label"><b>Project information</b><span>Spec sections, drawing sheets and documents this review may read</span></div>
-          <button className="fpick-btn has" onClick={() => setScopeOpen(!scopeOpen)} disabled={!secNorm} aria-expanded={scopeOpen}>
-            <span className="fpick-label">{!secNorm ? "Choose the spec section first" : scopeLoading ? "Finding related references..." : `${scopePages} reference${scopePages === 1 ? "" : "s"} selected`}</span>
-            <Icon name="down" size={15} className={scopeOpen ? "rot180" : ""} />
-          </button>
-        </div>
-        {scopeOpen && secNorm && (
-          <div className="refrow-expand">
-            <p className="muted small">Add anything else the reviewer must check against - for example the concrete spec and the footing detail for a fence submittal. Search by number, title or keyword.</p>
-            <ScopeSelector tree={tree} items={scope} designated={designated} mode={scopeMode} onMode={setScopeMode} loading={scopeLoading}
+        <div className="refblock">
+          <div className="refrow-label"><b>Project information</b><span>Spec sections, drawing sheets and documents this review checks against. Add anything else it needs, for example the concrete spec and a footing detail for a fence submittal.</span></div>
+          {secNorm ? (
+            <ScopeSelector tree={tree} items={scope} suggestions={suggestions} designated={designated} mode={scopeMode} onMode={setScopeMode} loading={scopeLoading}
               source={scopeSrc} onReset={() => suggest(true)} onChange={(i) => { setScope(i); setScopeDirty(true); }} />
-          </div>
-        )}
+          ) : <p className="muted small refblock-empty">Choose the spec section above and the related references appear here.</p>}
+        </div>
         <div className="refrow">
           <div className="refrow-label"><b>Quality templates</b><span>Approved examples to copy format and order from</span></div>
           <FilePicker multiple options={libOpts("example")} selected={examples} onChange={setExamples} placeholder="None" emptyText="No quality templates in the library yet"

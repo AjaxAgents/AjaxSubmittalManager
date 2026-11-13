@@ -92,12 +92,19 @@ export function Card({ title, icon, actions, children, className = "", sub }: { 
 
 export function Modal({ title, onClose, children, footer, wide }: { title: string; onClose: () => void; children: React.ReactNode; footer?: React.ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+  // Runs once when the dialog opens. (It used to re-run on every parent re-render because onClose is a new
+  // function each time, which stole focus to the close button mid-typing and closed open dropdowns.)
   useEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const k = (e: KeyboardEvent) => e.key === "Escape" && close.current();
     window.addEventListener("keydown", k);
-    ref.current?.querySelector<HTMLElement>("input,textarea,select,button")?.focus();
+    const body = ref.current?.querySelector(".modal-body");
+    const first = body?.querySelector<HTMLElement>("[autofocus],input:not([type=hidden]):not([disabled]),textarea,select")
+      || ref.current?.querySelector<HTMLElement>(".modal-body button, .modal-foot button");
+    if (first && !ref.current?.contains(document.activeElement)) first.focus();
     return () => window.removeEventListener("keydown", k);
-  }, [onClose]);
+  }, []);
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`modal ${wide ? "modal-wide" : ""}`} role="dialog" aria-modal="true" aria-label={title} ref={ref}>

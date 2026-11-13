@@ -17,12 +17,14 @@ from . import db
 from .config import mock_mode
 from .library.ingest import RE_SECREF, norm_section
 
-TYPES = ["Product Data", "Shop Drawings", "Product Data and Shop Drawings", "Other"]
+from .schemas import SUBMITTAL_TYPES, normalize_type
+
+TYPES = list(SUBMITTAL_TYPES)
 
 
 class AutofillResult(BaseModel):
     spec_section: str = Field("", description="CSI section the submittal is for, format '08 71 00', chosen from the list")
-    submittal_type: Literal["Product Data", "Shop Drawings", "Product Data and Shop Drawings", "Other", ""] = ""
+    submittal_type: str = Field("", description="one of: " + ", ".join(SUBMITTAL_TYPES))
     title: str = Field("", description="short description, e.g. 'Door Hardware - Sets 1-4'")
     subcontractor: str = Field("", description="company that prepared/submitted the package (exact name from the list if it matches)")
     manufacturers: list[str] = Field(default_factory=list)
@@ -52,7 +54,10 @@ def heuristic(project_id: str, text: str, filenames: list[str]) -> dict[str, Any
     low = hay.lower()
     pd = bool(re.search(r"product data|cut sheet|data sheet|catalog", low))
     sd = bool(re.search(r"shop drawing|fabrication drawing|\bdwg\b|elevation", low))
-    stype = "Product Data and Shop Drawings" if pd and sd else "Shop Drawings" if sd else "Product Data" if pd else ""
+    smp = bool(re.search(r"\bsamples?\b|color chart|finish chip", low))
+    calc = bool(re.search(r"calculations?|structural calc|engineering calc", low))
+    stype = ("Product Data & Shop Drawings" if pd and sd else "Shop Drawings" if sd else "Product Data" if pd
+             else "Calculations" if calc else "Samples" if smp else "")
     sub = ""
     for s in db.list_subs(project_id):
         if s["name"] and s["name"].lower() in low:
@@ -93,6 +98,9 @@ async def autofill(project_id: str, paths: list[Path], filenames: list[str]) -> 
         for k in ("submittal_type", "title", "subcontractor", "revision", "sequence"):
             if getattr(r, k):
                 res[k] = getattr(r, k)
+        if res.get("submittal_type"):
+            t = normalize_type(res["submittal_type"])
+            res["submittal_type"] = t if t in SUBMITTAL_TYPES else "Other"
         res["manufacturers"] = r.manufacturers
         res["source"] = "rules+ai"
         res["cost"] = round(tracker.spent_usd, 4)

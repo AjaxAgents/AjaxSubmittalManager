@@ -72,3 +72,10 @@ re-runs and packaging are shared; `single_verdicts` sends any unverified or low-
   PDF can be both a spec and the Division 01 procedures.
 - Catalog: filters (type, division/discipline, amended), sort, and a page viewer (`components/PageViewer.tsx`,
   server-rendered pages with zoom and a full-screen pop-up). `/catalog/item.pdf` extracts an item's pages as a PDF.
+- Reference scope suggestion returns `items` (clearly needed: designated section, amendments, referenced
+  sections, 01 33 procedures, sheets citing the section number) and `suggestions` (optional: sheets sharing
+  distinctive product words with the submittal; boilerplate and words found on >8% of sheets are ignored,
+  capped at 30). The UI shows suggestions unticked; search + Select all / Deselect all act on the visible list.
+- Submittal types: `schemas.SUBMITTAL_TYPES` (dropdown order), abbreviations in `config/naming.yaml`.
+- Cover tokens include the subcontractor's address and "City, ST ZIP" (from the subcontractor record) and
+  `RequiredDate+N` mappings (today + N days unless the review form has a date). Dates use `cover_date_format`.
